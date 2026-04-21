@@ -41,7 +41,7 @@ export default function Points() {
         <Card className="md:col-span-2 p-6 bg-[var(--primary)] text-white relative overflow-hidden grain border-black">
           <Sticker color="secondary" className="tilt-1">Your balance</Sticker>
           <div className="font-black text-6xl md:text-7xl mt-3">{data.points}</div>
-          <div className="uppercase tracking-widest text-sm font-bold opacity-90">Rinaka Points</div>
+          <div className="uppercase tracking-widest text-sm font-bold opacity-90">Points</div>
           <div className="mt-5 flex gap-2 flex-wrap">
             <Button variant="secondary" onClick={claim} data-testid="claim-daily">
               <Lightning size={16} weight="fill" /> Claim daily +5

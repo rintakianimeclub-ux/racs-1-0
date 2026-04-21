@@ -36,7 +36,7 @@ export default function Dashboard() {
         <Card className="bg-[var(--primary)] text-white p-3">
           <Trophy size={18} weight="fill" />
           <div className="font-black text-3xl mt-1">{user?.points ?? 0}</div>
-          <div className="text-xs uppercase tracking-widest">Rinaka Points</div>
+          <div className="text-xs uppercase tracking-widest">Points</div>
         </Card>
         <Card className="bg-[var(--accent)] p-3">
           <CurrencyCircleDollar size={18} weight="fill" />

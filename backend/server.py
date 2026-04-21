@@ -267,7 +267,7 @@ async def startup():
         await db.newsletters.insert_one({
             "newsletter_id": f"nl_{uuid.uuid4().hex[:10]}",
             "title": "Otaku World — Vol. 5, Issue 1",
-            "summary": "Fresh interviews, trading card drops, and your Rinaka Points highlights.",
+            "summary": "Fresh interviews, trading card drops, and your Points highlights.",
             "content": "Welcome back, otaku family! This month we're featuring interviews with Karen Sakurai & Kana Ueda, plus the full trading card collection reveal.",
             "cover_image": "https://images.pexels.com/photos/31369734/pexels-photo-31369734.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
             "author": "Rintaki Admin",
@@ -280,7 +280,7 @@ async def startup():
             await db.forum_threads.insert_one({
                 "thread_id": f"th_{uuid.uuid4().hex[:10]}",
                 "title": "Welcome to the Rintaki Forums!",
-                "body": "Introduce yourself, share your favorite anime & grab 10 Rinaka Points for your first post.",
+                "body": "Introduce yourself, share your favorite anime & grab 10 Points for your first post.",
                 "category": "Announcements",
                 "author_id": admin["user_id"],
                 "author_name": admin["name"],

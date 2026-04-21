@@ -51,11 +51,11 @@ export default function Login() {
               Your<br/>otaku<br/><span className="hand-underline text-black">hub</span>.
             </h1>
             <p className="max-w-sm font-medium text-white/90">
-              Forums, events, newsletters, and Rinaka Points — the Rintaki Anime Club Society universe in one app.
+              Forums, events, newsletters, and Points — the Rintaki Anime Club Society universe in one app.
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <span className="sticker bg-[var(--secondary)] text-black tilt-1">★ Rinaka Points</span>
+            <span className="sticker bg-[var(--secondary)] text-black tilt-1">★ Points</span>
             <span className="sticker bg-[var(--accent)] text-black tilt-2">✦ Otaku World</span>
             <span className="sticker bg-white text-black tilt-3">⚡ Live Forums</span>
           </div>

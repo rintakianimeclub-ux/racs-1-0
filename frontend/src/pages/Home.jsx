@@ -70,7 +70,7 @@ export default function Home() {
             <div className="bg-white text-black border-2 border-black rounded-xl p-2 flex items-center gap-2">
               <CurrencyCircleDollar size={16} weight="fill" />
               <div>
-                <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Cash</div>
+                <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Anime Cash</div>
                 <div className="font-black">{user?.anime_cash ?? 0}</div>
               </div>
             </div>

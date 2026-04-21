@@ -11,8 +11,8 @@ export function PointsGuide() {
         <h1 className="font-black text-3xl flex items-center gap-2"><Trophy size={26} weight="fill" className="text-[var(--primary)]" /> Points guide</h1>
       </div>
       <Card>
-        <h3 className="font-black text-lg">What are Rinaka Points?</h3>
-        <p className="text-sm mt-1">Rinaka Points are your reputation currency inside the club. Earn them by participating; use them in the members shop.</p>
+        <h3 className="font-black text-lg">What are Points?</h3>
+        <p className="text-sm mt-1">Points are your reputation currency inside the club. Earn them by participating; use them in the members shop.</p>
       </Card>
       <Card>
         <h3 className="font-black text-lg">How to earn</h3>
