@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button, Input } from "@/components/ui-brutal";
+import Logo from "@/components/Logo";
 import { GoogleLogo, Lightning, Eye, EyeSlash } from "@phosphor-icons/react";
 
 export default function Login() {
@@ -40,7 +41,7 @@ export default function Login() {
         />
         <div className="relative z-10 h-full flex flex-col justify-between p-10 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white text-black border-2 border-black rounded-full flex items-center justify-center font-black text-xl shadow-[4px_4px_0_#111]">R</div>
+            <Logo size={52} ring="bg-white" className="shadow-[4px_4px_0_#111]" />
             <div>
               <div className="font-black text-xl tracking-tight">RINTAKI</div>
               <div className="text-[11px] uppercase tracking-[0.3em] opacity-90">Anime Club Society</div>
@@ -66,7 +67,7 @@ export default function Login() {
       <div className="flex items-center justify-center p-6 md:p-12">
         <form onSubmit={submit} className="w-full max-w-md pop-in" data-testid="login-form">
           <div className="md:hidden flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-[var(--primary)] border-2 border-black rounded-full flex items-center justify-center text-white font-black">R</div>
+            <Logo size={42} />
             <div>
               <div className="font-black text-xl leading-none">RINTAKI</div>
               <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--muted-fg)]">Anime Club Society</div>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button, Input } from "@/components/ui-brutal";
+import Logo from "@/components/Logo";
 import { GoogleLogo, Sparkle } from "@phosphor-icons/react";
 
 export default function Register() {
@@ -31,7 +32,7 @@ export default function Register() {
     <div className="min-h-screen flex items-center justify-center p-6">
       <form onSubmit={submit} className="w-full max-w-md pop-in" data-testid="register-form">
         <Link to="/login" className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-[var(--primary)] border-2 border-black rounded-full flex items-center justify-center text-white font-black">R</div>
+          <Logo size={42} />
           <div>
             <div className="font-black text-xl leading-none">RINTAKI</div>
             <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--muted-fg)]">Anime Club Society</div>

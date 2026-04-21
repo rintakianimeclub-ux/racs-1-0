@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import Logo from "@/components/Logo";
 import {
   HouseSimple,
   ChatsCircle,
@@ -30,9 +31,7 @@ export default function Layout({ children }) {
       <header className="sticky top-0 z-30 bg-[var(--bg)] border-b-2 border-black">
         <div className="max-w-md mx-auto px-3 py-2.5 flex items-center justify-between gap-2">
           <Link to="/" className="flex items-center gap-2 min-w-0" data-testid="brand-link">
-            <div className="w-9 h-9 shrink-0 bg-[var(--primary)] border-2 border-black rounded-full flex items-center justify-center text-white font-black tilt-2">
-              R
-            </div>
+            <Logo size={38} className="tilt-2 shadow-[3px_3px_0_#111]" />
             <div className="leading-tight min-w-0">
               <div className="font-black text-base tracking-tight truncate">RINTAKI</div>
               <div className="text-[9px] uppercase tracking-[0.25em] text-[var(--muted-fg)] truncate">Anime Club Society</div>
