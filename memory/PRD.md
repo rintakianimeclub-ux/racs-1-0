@@ -84,7 +84,14 @@ See `/app/memory/test_credentials.md`.
 
 ## Changelog
 
-### 2026-04-22 — Public-first app + PMPro membership gating
+### 2026-04-22 — PMPro levels auto-sync
+- **Join page now auto-syncs** from `https://rintaki.org/membership-account/membership-levels/` every 1 hour (cached server-side).
+- Scraper: finds every `a[href*="pmpro_level=N"]`, walks up to the card ancestor (h3 + ul), extracts name, subtitle (Monthly/Yearly Subscription), price via `$\s*[\d.]+\s*/\s*(mo|yr)` regex, and all benefit bullets.
+- New endpoint `GET /api/memberships/levels?refresh=1` admins can force-refresh; UI has a "Force refresh" button at the bottom of the Join page for admins.
+- Graceful fallback: stale cache → hardcoded minimum if scrape ever fails.
+- Price/benefit changes made in PMPro on rintaki.org show up in the app automatically (no deploy required).
+
+
 - **Anonymous browsing enabled**. Home, Forums, Forum threads, Events, Event detail, Events Gallery, TCG hub, TCG collections, Magazines, Library, Newsletters, Videos, and /more are now all publicly accessible without login.
 - **Auth-gated (any logged-in user)**: Profile, Notifications, Tickets, Spotlight feed.
 - **Member-gated (PMPro level ≥ 1 OR admin)**: Points, Messages, Members directory, Dashboard + all dashboard sub-pages, TCG claim/trade-in/trade, daily claim, posting/replying/liking in the forum.

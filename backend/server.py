@@ -1402,72 +1402,118 @@ async def sync_job_status(job_id: str, user: dict = Depends(require_admin)):
         raise HTTPException(404, "Job not found")
     return j
 
-MEMBERSHIP_LEVELS = [
-    {
-        "level": 1, "name": "Free", "price": "$0", "interval": "mo", "tier": "free",
-        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=1",
-        "benefits": [
-            "Member ID Card", "50 Points per month", "Earn Anime Cash",
-            "Official Club Shirt (1)", "Library Access", "Anime Poster",
-            "Anime Merch (if available)", "Trading Card Member Starter Pack (5)",
-        ],
-    },
-    {
-        "level": 2, "name": "Regular", "price": "$19.99", "interval": "mo", "tier": "regular",
-        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=2",
-        "benefits": [
-            "PVC Member ID Card (no photo)", "50 points per month", "$5.00 Anime Cash every month",
-            "Official Club Shirt (1)", "Library Access", "Anime Poster",
-            "Access to Crunchyroll Account", "Anime Give Away Entry (1)",
-            "Gift Card Give Away Entry (1)", "Anime Keychain (1)",
-            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
-            "Trading Card Member Starter Pack (5)", "Trading Card Member Booster Pack (10)",
-        ],
-    },
-    {
-        "level": 3, "name": "Regular (Yearly)", "price": "$239.88", "interval": "yr", "tier": "regular",
-        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=3",
-        "benefits": [
-            "PVC Member ID Card (no photo)", "50 points per month", "$5.00 Anime Cash every month",
-            "Official Club Shirt (1)", "Library Access", "Anime Poster",
-            "Access to Crunchyroll Account", "Anime Give Away Entry (1)",
-            "Gift Card Give Away Entry (1)", "Anime Keychain (1)",
-            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
-            "Trading Card Member Starter Pack (5)", "Trading Card Booster Pack (10)",
-            "Trading Card Booster Pack (15)",
-        ],
-    },
-    {
-        "level": 4, "name": "Premium", "price": "$39.99", "interval": "mo", "tier": "premium",
-        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=4",
-        "benefits": [
-            "PVC Member ID Card (any option)", "100 points per month", "$10.00 Anime Cash every month",
-            "Official Club Shirt (1)", "Library Access", "Anime Poster",
-            "Access to Crunchyroll Account", "Access to HiDive Account",
-            "Anime Give Away Entry (2)", "Gift Card Give Away Entry (2)", "Anime Keychain (2)",
-            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
-            "Movie Tickets", "Trading Card Member Starter Pack (5)",
-            "Trading Card Booster Pack (15)", "Trading Card Starter Pack (25)",
-        ],
-    },
-    {
-        "level": 5, "name": "Premium (Yearly)", "price": "$479.88", "interval": "yr", "tier": "premium",
-        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=5",
-        "benefits": [
-            "PVC Member ID Card (any option)", "100 points per month", "$10.00 Anime Cash every month",
-            "Official Club Shirt (1)", "Library Access", "Anime Poster",
-            "Access to Crunchyroll Account", "Access to HiDive Account",
-            "Anime Give Away Entry (2)", "Gift Card Give Away Entry (2)", "Anime Keychain (2)",
-            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
-            "Movie Tickets", "Trading Card Member Starter Pack (5)",
-            "Trading Card Booster Pack (20)", "Trading Card Starter Pack (25)",
-        ],
-    },
+PMPRO_LEVELS_URL = "https://rintaki.org/membership-account/membership-levels/"
+_pmpro_cache: dict = {"ts": 0, "levels": None}
+PMPRO_TTL = 3600  # 1 hour
+
+# Fallback list used only if live scrape fails AND no cache exists.
+MEMBERSHIP_LEVELS_FALLBACK = [
+    {"level": 1, "name": "Free", "subtitle": "", "price": "$0", "interval": "mo", "tier": "free",
+     "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=1",
+     "benefits": ["Member ID Card", "Library Access"]},
+    {"level": 2, "name": "Regular", "subtitle": "Monthly Subscription", "price": "$19.99", "interval": "mo", "tier": "regular",
+     "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=2", "benefits": []},
+    {"level": 3, "name": "Regular", "subtitle": "Yearly Subscription", "price": "$239.88", "interval": "yr", "tier": "regular",
+     "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=3", "benefits": []},
+    {"level": 4, "name": "Premium", "subtitle": "Monthly Subscription", "price": "$39.99", "interval": "mo", "tier": "premium",
+     "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=4", "benefits": []},
+    {"level": 5, "name": "Premium", "subtitle": "Yearly Subscription", "price": "$479.88", "interval": "yr", "tier": "premium",
+     "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=5", "benefits": []},
 ]
 
+async def _scrape_pmpro_levels() -> List[dict]:
+    from bs4 import BeautifulSoup
+    import re as _re
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0 RintakiApp"}, follow_redirects=True) as c:
+        r = await c.get(PMPRO_LEVELS_URL)
+        r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+    levels = []
+    for a in soup.select('a[href*="pmpro_level="]'):
+        href = a.get("href", "")
+        m = _re.search(r"pmpro_level=(\d+)", href)
+        if not m:
+            continue
+        level_id = int(m.group(1))
+        # Find the card ancestor that has both an h3 and a ul (benefits)
+        card = a
+        for _ in range(10):
+            card = card.parent
+            if card is None:
+                break
+            if card.find("h3") and card.find("ul"):
+                break
+        if not card:
+            continue
+        h3 = card.find("h3")
+        ul = card.find("ul")
+        name = h3.get_text(strip=True) if h3 else f"Level {level_id}"
+        # subtitle = <p> containing "Subscription" / "Monthly" / "Yearly"
+        subtitle = ""
+        for p in card.select("p"):
+            t = p.get_text(strip=True)
+            if any(w in t for w in ("Subscription", "Monthly", "Yearly")):
+                subtitle = t
+                break
+        # price: scan nodes between h3 and ul for "$ NN.NN /xx" pattern
+        price = ""
+        interval = ""
+        node = h3
+        price_re = _re.compile(r"\$\s*([\d,]+(?:\.\d+)?)\s*/\s*(mo|yr|month|year)", _re.IGNORECASE)
+        for _ in range(60):
+            node = node.next_element if node is not None else None
+            if node is None or node is ul:
+                break
+            if hasattr(node, "get_text"):
+                t = node.get_text(" ", strip=True)
+                pm = price_re.search(t)
+                if pm:
+                    price = f"${pm.group(1)}"
+                    interval = pm.group(2).lower().replace("month", "mo").replace("year", "yr")
+                    break
+        if not price:
+            price = "$0" if level_id == 1 else ""
+            interval = interval or "mo"
+        benefits = [li.get_text(" ", strip=True) for li in ul.select("li")] if ul else []
+        # Tier classification
+        tier = "free" if "free" in name.lower() or level_id == 1 else ("premium" if "premium" in name.lower() else "regular")
+        levels.append({
+            "level": level_id,
+            "name": name,
+            "subtitle": subtitle,
+            "price": price,
+            "interval": interval,
+            "tier": tier,
+            "checkout_url": f"https://rintaki.org/membership-account/membership-checkout/?pmpro_level={level_id}",
+            "benefits": benefits,
+        })
+    # Dedup by level id (PMPro page may have duplicate anchors)
+    by_id = {}
+    for lvl in levels:
+        by_id.setdefault(lvl["level"], lvl)
+    return sorted(by_id.values(), key=lambda x: x["level"])
+
+async def get_membership_levels_cached(force: bool = False) -> dict:
+    now_ts = _time.time()
+    if not force and _pmpro_cache["levels"] and now_ts - _pmpro_cache["ts"] < PMPRO_TTL:
+        return {"levels": _pmpro_cache["levels"], "source": "cache", "cached_at": int(_pmpro_cache["ts"])}
+    try:
+        live = await _scrape_pmpro_levels()
+        if live:
+            _pmpro_cache["levels"] = live
+            _pmpro_cache["ts"] = now_ts
+            return {"levels": live, "source": "live", "cached_at": int(now_ts)}
+    except Exception as e:
+        logger.warning(f"PMPro scrape failed: {e}")
+    # Fallback to last-known cache or hardcoded
+    if _pmpro_cache["levels"]:
+        return {"levels": _pmpro_cache["levels"], "source": "cache-stale", "cached_at": int(_pmpro_cache["ts"])}
+    return {"levels": MEMBERSHIP_LEVELS_FALLBACK, "source": "fallback", "cached_at": 0}
+
 @api.get("/memberships/levels")
-async def list_membership_levels():
-    return {"levels": MEMBERSHIP_LEVELS}
+async def list_membership_levels(refresh: bool = False):
+    return await get_membership_levels_cached(force=refresh)
+
 
 
 # ----------------- Social / Links -----------------

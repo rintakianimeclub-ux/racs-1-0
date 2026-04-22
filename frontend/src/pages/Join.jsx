@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Button, Sticker } from "@/components/ui-brutal";
-import { Check, SignIn, Sparkle, ArrowSquareOut } from "@phosphor-icons/react";
+import { Check, SignIn, Sparkle, ArrowSquareOut, ArrowsClockwise } from "@phosphor-icons/react";
 
 const TIER_COLORS = {
   free:    "bg-white",
@@ -14,15 +14,22 @@ const TIER_COLORS = {
 export default function Join() {
   const { user } = useAuth();
   const [levels, setLevels] = useState([]);
+  const [meta, setMeta] = useState({ source: "", cached_at: 0 });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await api.get("/memberships/levels").catch(() => ({ data: { levels: [] } }));
-      setLevels(data.levels || []);
-      setLoading(false);
-    })();
-  }, []);
+  const load = async (refresh = false) => {
+    setRefreshing(refresh);
+    const { data } = await api.get("/memberships/levels", { params: refresh ? { refresh: 1 } : {} }).catch(() => ({ data: { levels: [] } }));
+    setLevels(data.levels || []);
+    setMeta({ source: data.source || "", cached_at: data.cached_at || 0 });
+    setLoading(false);
+    setRefreshing(false);
+  };
+  useEffect(() => { load(false); }, []);
+
+  const lastUpdated = meta.cached_at ? new Date(meta.cached_at * 1000).toLocaleString() : "";
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="space-y-5">
@@ -73,6 +80,11 @@ export default function Join() {
                   <div>
                     <Sticker color="primary">Level {lvl.level}</Sticker>
                     <h2 className="font-black text-2xl mt-1 leading-tight">{lvl.name}</h2>
+                    {lvl.subtitle && (
+                      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--muted-fg)] mt-0.5">
+                        {lvl.subtitle}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="font-black text-3xl leading-none">{lvl.price}</div>
@@ -108,6 +120,17 @@ export default function Join() {
           Non-members can browse events, galleries, cards, magazines & the library for free.
           Only members earn points and access the members dashboard.
         </p>
+        {lastUpdated && (
+          <p className="text-[10px] text-[var(--muted-fg)] font-bold uppercase tracking-widest mt-2">
+            Synced from rintaki.org · {lastUpdated}
+          </p>
+        )}
+        {isAdmin && (
+          <button onClick={() => load(true)} disabled={refreshing} data-testid="refresh-levels-btn"
+                  className="mt-2 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest underline decoration-[var(--primary)] decoration-2 underline-offset-4 disabled:opacity-50">
+            <ArrowsClockwise size={12} weight="bold" /> {refreshing ? "Refreshing…" : "Force refresh"}
+          </button>
+        )}
       </Card>
     </div>
   );
