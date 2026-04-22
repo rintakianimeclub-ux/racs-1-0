@@ -2215,30 +2215,79 @@ async def create_contest(data: ContestCreate, user: dict = Depends(require_admin
     return c
 
 class ArticleSubmissionCreate(BaseModel):
-    title: str
+    name: str = ""
+    email: str = ""
+    member_id: str = ""
+    content: str = ""
+    # Optional file: {filename, mime, data_b64, size}
+    file_name: Optional[str] = None
+    file_mime: Optional[str] = None
+    file_data_b64: Optional[str] = None
+    file_size: Optional[int] = None
+    # Legacy: kept for existing submissions (points reward still uses this)
     kind: str = "blog"  # "blog" or "magazine"
+    title: str = ""
     summary: str = ""
-    content: str
 
 @api.get("/articles")
 async def list_articles(user: dict = Depends(get_current_user)):
     q = {} if user.get("role") == "admin" else {"user_id": user["user_id"]}
-    items = await db.article_submissions.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Strip base64 file payload from list responses; /articles/{id}/file streams it separately
+    items = await db.article_submissions.find(q, {"_id": 0, "file_data_b64": 0}).sort("created_at", -1).to_list(200)
     return {"articles": items}
 
 @api.post("/articles")
-async def create_article(data: ArticleSubmissionCreate, user: dict = Depends(get_current_user)):
+async def create_article(data: ArticleSubmissionCreate, user: dict = Depends(require_member)):
+    # Require at least one of content or file
+    if not (data.content or "").strip() and not data.file_data_b64:
+        raise HTTPException(400, "Please provide either written content or an uploaded file.")
+    # File size guard (10 MB after base64 decode ~ 13.3 MB encoded)
+    if data.file_data_b64 and len(data.file_data_b64) > 14_000_000:
+        raise HTTPException(413, "File too large. Max 10 MB.")
+    if not (data.email or "").strip():
+        # default to user's account email
+        data.email = user.get("email", "")
+    payload = data.model_dump()
+    # Auto-title from first 60 chars of content or filename
+    if not payload.get("title"):
+        if payload.get("content"):
+            payload["title"] = payload["content"][:60].strip() + ("…" if len(payload["content"]) > 60 else "")
+        elif payload.get("file_name"):
+            payload["title"] = payload["file_name"]
+        else:
+            payload["title"] = "Untitled submission"
     a = {
         "article_id": f"ar_{uuid.uuid4().hex[:10]}",
         "user_id": user["user_id"],
         "user_name": user["name"],
-        **data.model_dump(),
+        **payload,
         "status": "pending",
         "created_at": iso(now_utc()),
     }
     await db.article_submissions.insert_one(a)
+    # Return a copy without _id and without the raw base64 (reduces payload size)
     a.pop("_id", None)
+    a.pop("file_data_b64", None)
     return a
+
+@api.get("/articles/{article_id}/file")
+async def download_article_file(article_id: str, user: dict = Depends(get_current_user)):
+    a = await db.article_submissions.find_one({"article_id": article_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "Not found")
+    # Only admin or the author
+    if user.get("role") != "admin" and a.get("user_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    if not a.get("file_data_b64"):
+        raise HTTPException(404, "No file attached")
+    import base64 as _b64
+    data = _b64.b64decode(a["file_data_b64"])
+    from fastapi.responses import Response
+    return Response(
+        content=data,
+        media_type=a.get("file_mime") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{a.get("file_name") or article_id}"'},
+    )
 
 @api.post("/articles/{article_id}/approve")
 async def approve_article(article_id: str, user: dict = Depends(require_admin)):

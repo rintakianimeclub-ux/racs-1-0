@@ -222,42 +222,127 @@ export function Contests() {
 }
 
 export function SubmitArticle() {
-  const [form, setForm] = useState({ title: "", kind: "blog", summary: "", content: "" });
+  const { user } = useAuth();
+  const [form, setForm] = useState({
+    name: "", email: "", member_id: "", content: "",
+    file_name: "", file_mime: "", file_data_b64: "", file_size: 0,
+  });
   const [items, setItems] = useState([]);
   const [sent, setSent] = useState(false);
+  const [err, setErr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Prefill name/email from the logged-in user
+  useEffect(() => {
+    setForm((f) => ({ ...f, name: user?.name || "", email: user?.email || "" }));
+  }, [user?.name, user?.email]);
 
   const load = async () => { const { data } = await api.get("/articles"); setItems(data.articles || []); };
   useEffect(() => { load(); }, []);
 
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setErr("File too large (max 10 MB)"); return; }
+    // Convert to base64
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(",")[1] || "");
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+    setForm((f) => ({ ...f, file_name: file.name, file_mime: file.type || "application/octet-stream", file_data_b64: b64, file_size: file.size }));
+    setErr("");
+  };
+
+  const clearFile = () => setForm((f) => ({ ...f, file_name: "", file_mime: "", file_data_b64: "", file_size: 0 }));
+
   const submit = async (e) => {
     e.preventDefault();
-    await api.post("/articles", form);
-    setForm({ title: "", kind: "blog", summary: "", content: "" });
-    setSent(true);
-    setTimeout(() => setSent(false), 2500);
-    load();
+    setErr("");
+    if (!form.content.trim() && !form.file_data_b64) {
+      setErr("Please add your poem/article text OR upload a file.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.post("/articles", form);
+      setSent(true);
+      setForm((f) => ({ ...f, content: "", file_name: "", file_mime: "", file_data_b64: "", file_size: 0 }));
+      setTimeout(() => setSent(false), 3000);
+      load();
+    } catch (ex) {
+      setErr(ex.response?.data?.detail || "Submit failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="space-y-5">
       <Link to="/dashboard" className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-widest"><ArrowLeft size={14} weight="bold" /> Back</Link>
       <div>
-        <h1 className="font-black text-3xl flex items-center gap-2"><Article size={26} weight="fill" className="text-[var(--primary)]" /> Submit article</h1>
-        <p className="text-[var(--muted-fg)] text-sm">Admin approves → you earn points. Blog = +25 · Magazine = +50.</p>
+        <h1 className="font-black text-3xl flex items-center gap-2"><Article size={26} weight="fill" className="text-[var(--primary)]" /> Article Submission</h1>
+        <p className="text-[var(--muted-fg)] text-sm">
+          Upload your article as Word or PDF, or type it in the box below. Artwork must be JPEG only. Admin approves → you earn points.
+        </p>
       </div>
 
       <form onSubmit={submit} className="space-y-3" data-testid="article-form">
-        <div className="flex gap-2">
-          {[["blog", "Blog"], ["magazine", "Magazine"]].map(([v, l]) => (
-            <button type="button" key={v} onClick={() => setForm({ ...form, kind: v })}
-                    data-testid={`article-kind-${v}`}
-                    className={`flex-1 border-2 border-black rounded-full py-2 font-bold text-sm ${form.kind === v ? "bg-[var(--primary)] text-white" : "bg-white"}`}>{l}</button>
-          ))}
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-widest">Name</label>
+          <Input placeholder="Your name" data-testid="art-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </div>
-        <Input required placeholder="Title" value={form.title} data-testid="article-title" onChange={(e) => setForm({ ...form, title: e.target.value })} />
-        <Input placeholder="One-line summary" value={form.summary} data-testid="article-summary" onChange={(e) => setForm({ ...form, summary: e.target.value })} />
-        <Textarea required rows={8} placeholder="Write your article..." value={form.content} data-testid="article-content" onChange={(e) => setForm({ ...form, content: e.target.value })} />
-        <Button type="submit" className="w-full" data-testid="article-submit">{sent ? "Submitted!" : "Submit for review"}</Button>
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-widest">Email *</label>
+          <Input required type="email" placeholder="you@example.com" data-testid="art-email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-widest">Member ID Number *</label>
+          <Input required placeholder="Your member ID" data-testid="art-member-id" value={form.member_id} onChange={(e) => setForm({ ...form, member_id: e.target.value })} />
+        </div>
+
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-widest">Upload File (JPEG, DOC, PDF)</label>
+          {form.file_name ? (
+            <div className="flex items-center justify-between gap-2 bg-[var(--secondary)] border-2 border-black rounded-lg px-3 py-2 mt-1" data-testid="art-file-chip">
+              <div className="flex items-center gap-2 min-w-0">
+                <Article size={16} weight="fill" />
+                <div className="min-w-0">
+                  <div className="font-black text-sm truncate">{form.file_name}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest">{(form.file_size / 1024).toFixed(1)} KB</div>
+                </div>
+              </div>
+              <button type="button" onClick={clearFile} className="w-7 h-7 border-2 border-black rounded-full flex items-center justify-center" data-testid="art-clear-file">
+                <X size={12} weight="bold" />
+              </button>
+            </div>
+          ) : (
+            <label className="block mt-1 cursor-pointer">
+              <div className="border-2 border-dashed border-black rounded-lg py-4 text-center font-bold text-sm bg-white hover:bg-[var(--secondary)] transition">
+                Tap to choose a file
+                <div className="text-[10px] font-black uppercase tracking-widest text-[var(--muted-fg)] mt-1">JPEG · DOC · DOCX · PDF · max 10 MB</div>
+              </div>
+              <input type="file" accept=".jpg,.jpeg,.doc,.docx,.pdf,image/jpeg,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                     className="hidden" onChange={onFile} data-testid="art-file-input" />
+            </label>
+          )}
+        </div>
+
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-widest">Poem / Article</label>
+          <Textarea rows={8} placeholder="Or type your submission here…" data-testid="art-content"
+                    value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
+        </div>
+
+        {err && <div className="bg-[var(--primary)] text-white border-2 border-black rounded-lg px-3 py-2 text-sm font-bold" data-testid="art-err">{err}</div>}
+
+        <Button type="submit" disabled={submitting} className="w-full" data-testid="art-submit">
+          {submitting ? "Sending…" : sent ? "✓ Sent!" : "Send"}
+        </Button>
+        <p className="text-[10px] text-center text-[var(--muted-fg)] font-bold uppercase tracking-widest">
+          +25 pts when admin approves · +50 pts if published in Otaku World
+        </p>
       </form>
 
       <div>
@@ -266,10 +351,12 @@ export function SubmitArticle() {
           <div className="space-y-2">
             {items.map((a) => (
               <Card key={a.article_id} className="p-3" data-testid={`sub-${a.article_id}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-bold">{a.title}</div>
-                    <div className="text-xs text-[var(--muted-fg)]">{a.kind} · {new Date(a.created_at).toLocaleDateString()}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold truncate">{a.title || a.file_name || "Untitled"}</div>
+                    <div className="text-xs text-[var(--muted-fg)]">
+                      {a.file_name ? "File · " : ""}{new Date(a.created_at).toLocaleDateString()}
+                    </div>
                   </div>
                   <span className={`sticker ${a.status === "approved" ? "bg-[var(--accent)]" : "bg-[var(--secondary)]"}`}>{a.status}</span>
                 </div>
