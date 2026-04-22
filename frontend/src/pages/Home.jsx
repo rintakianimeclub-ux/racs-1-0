@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker, Button, Avatar } from "@/components/ui-brutal";
 import Logo from "@/components/Logo";
-import { Fire, Calendar, ArrowUpRight, Trophy, ChatsCircle, Newspaper, Lightning, BookOpen, Images, Gift, CurrencyCircleDollar } from "@phosphor-icons/react";
+import { Fire, Calendar, ArrowUpRight, Trophy, ChatsCircle, Newspaper, Lightning, BookOpen, Images, Gift, CurrencyCircleDollar, Buildings, FilmSlate } from "@phosphor-icons/react";
 
 function stripHtml(html = "") {
   const d = document.createElement("div");
@@ -95,8 +95,8 @@ export default function Home() {
       <div className="grid grid-cols-4 gap-2">
         <QuickTile to="/events" icon={Calendar} label="Events" />
         <QuickTile to="/magazines" icon={BookOpen} label="Mag" />
-        <QuickTile to="/feed" icon={Images} label="Spotlight" />
-        <QuickTile to="/dashboard" icon={Gift} label="Members" />
+        <QuickTile to="/library" icon={Buildings} label="Library" />
+        <QuickTile to="/events-gallery" icon={FilmSlate} label="Gallery" />
       </div>
 
       {/* Latest rintaki articles */}

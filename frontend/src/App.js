@@ -10,6 +10,7 @@ import Home from "@/pages/Home";
 import Forums from "@/pages/Forums";
 import ForumThread from "@/pages/ForumThread";
 import Events from "@/pages/Events";
+import EventDetail from "@/pages/EventDetail";
 import { TicketSuccess, MyTickets } from "@/pages/Tickets";
 import Points from "@/pages/Points";
 import Newsletters from "@/pages/Newsletters";
@@ -23,6 +24,7 @@ import More from "@/pages/More";
 import Feed from "@/pages/Feed";
 import Magazines from "@/pages/Magazines";
 import Library from "@/pages/Library";
+import EventsGallery from "@/pages/EventsGallery";
 import TCGHome from "@/pages/TCGHome";
 import TCGCollection from "@/pages/TCGCollection";
 import TCGClaim from "@/pages/TCGClaim";
@@ -67,6 +69,7 @@ function RouterShell() {
       <Route path="/forums" element={<Protected><Forums /></Protected>} />
       <Route path="/forums/:id" element={<Protected><ForumThread /></Protected>} />
       <Route path="/events" element={<Protected><Events /></Protected>} />
+      <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
       <Route path="/tickets" element={<Protected><MyTickets /></Protected>} />
       <Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
       <Route path="/points" element={<Protected><Points /></Protected>} />
@@ -83,6 +86,7 @@ function RouterShell() {
       <Route path="/feed" element={<Protected><Feed /></Protected>} />
       <Route path="/magazines" element={<Protected><Magazines /></Protected>} />
       <Route path="/library" element={<Protected><Library /></Protected>} />
+      <Route path="/events-gallery" element={<Protected><EventsGallery /></Protected>} />
 
       <Route path="/tcg" element={<Protected><TCGHome /></Protected>} />
       <Route path="/tcg/collections/:id" element={<Protected><TCGCollection /></Protected>} />

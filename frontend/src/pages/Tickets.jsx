@@ -60,32 +60,33 @@ export function TicketSuccess() {
 }
 
 export function MyTickets() {
-  const [tickets, setTickets] = useState([]);
-  useEffect(() => { api.get("/tickets").then(({ data }) => setTickets(data.tickets || [])); }, []);
   return (
     <div className="space-y-5">
       <div>
         <h1 className="font-black text-3xl flex items-center gap-2"><TicketIcon size={26} weight="fill" className="text-[var(--primary)]" /> My tickets</h1>
-        <p className="text-[var(--muted-fg)] text-sm">Show at entry. Screenshots are fine.</p>
+        <p className="text-[var(--muted-fg)] text-sm">Your tickets live on rintaki.org via Event Tickets.</p>
       </div>
-      {tickets.length === 0 ? (
-        <Card><p className="text-sm text-[var(--muted-fg)]">No tickets yet. <Link to="/events" className="font-bold underline">Browse events</Link>.</p></Card>
-      ) : (
-        <div className="space-y-3">
-          {tickets.map((t) => (
-            <Card key={t.ticket_id} className="p-0 overflow-hidden" data-testid={`ticket-${t.ticket_id}`}>
-              {t.event?.cover_image && <div className="aspect-[16/9] border-b-2 border-black"><img src={t.event.cover_image} className="w-full h-full object-cover" alt="" /></div>}
-              <div className="p-4">
-                <Sticker color="primary">✓ Paid</Sticker>
-                <h3 className="font-black text-xl mt-2">{t.event?.title || "Event"}</h3>
-                <p className="text-xs text-[var(--muted-fg)]">{t.event?.starts_at ? new Date(t.event.starts_at).toLocaleString() : ""}</p>
-                <p className="text-xs font-bold uppercase tracking-widest mt-1">{t.event?.location}</p>
-                <div className="mt-3 font-mono text-[10px] bg-black text-white p-2 rounded-lg">TICKET #{t.ticket_id}</div>
-              </div>
-            </Card>
-          ))}
+      <Card className="p-5 bg-[var(--secondary)]">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 bg-white border-2 border-black rounded-full flex items-center justify-center"><TicketIcon size={18} weight="fill" /></div>
+          <div className="flex-1">
+            <div className="font-black">Open ticket portal</div>
+            <p className="text-sm mt-1">You'll log in on rintaki.org to see the tickets you've purchased.</p>
+          </div>
         </div>
-      )}
+        <a href="https://rintaki.org/tickets/" target="_blank" rel="noreferrer" className="block mt-4" data-testid="open-tickets-btn">
+          <Button className="w-full">Open my tickets →</Button>
+        </a>
+      </Card>
+      <Link to="/events" data-testid="browse-events-link">
+        <Card className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-[var(--primary)] text-white border-2 border-black rounded-full flex items-center justify-center"><TicketIcon size={18} weight="fill" /></div>
+          <div className="flex-1">
+            <div className="font-black">Browse events</div>
+            <div className="text-xs text-[var(--muted-fg)]">Find something new to attend</div>
+          </div>
+        </Card>
+      </Link>
     </div>
   );
 }

@@ -780,7 +780,136 @@ async def leaderboard():
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("points", -1).limit(20).to_list(20)
     return {"leaderboard": [public_user(u) for u in users]}
 
-# ----------------- Events -----------------
+# ----------------- Events (The Events Calendar proxy + banner + media) -----------------
+TEC_BASE = "https://rintaki.org/wp-json/tribe/events/v1"
+
+def _tec_to_simple(ev: dict) -> dict:
+    img = ev.get("image")
+    image_url = img.get("url") if isinstance(img, dict) else (img if isinstance(img, str) else None)
+    venue = ev.get("venue") or []
+    if isinstance(venue, list) and venue:
+        venue = venue[0]
+    venue_name = venue.get("venue") if isinstance(venue, dict) else ""
+    venue_city = venue.get("city") if isinstance(venue, dict) else ""
+    return {
+        "event_id": str(ev.get("id", "")),
+        "title": ev.get("title", ""),
+        "description": (ev.get("description") or "").strip(),
+        "excerpt": (ev.get("excerpt") or "").strip(),
+        "url": ev.get("url", ""),
+        "start_date": ev.get("start_date", ""),
+        "end_date": ev.get("end_date", ""),
+        "all_day": ev.get("all_day", False),
+        "cover_image": image_url,
+        "venue": venue_name,
+        "city": venue_city,
+    }
+
+async def _tec_fetch(params: dict) -> list:
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            r = await hc.get(f"{TEC_BASE}/events", params=params)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return [_tec_to_simple(e) for e in data.get("events", [])]
+    except Exception as e:
+        logger.warning(f"TEC fetch failed: {e}")
+        return []
+
+@api.get("/events/upcoming")
+async def events_upcoming():
+    today = now_utc().strftime("%Y-%m-%d")
+    events = await _tec_fetch({"per_page": 50, "start_date": today, "status": "publish"})
+    # attach app-side banner overrides
+    for ev in events:
+        b = await db.event_banners.find_one({"event_id": ev["event_id"]}, {"_id": 0, "banner_url": 1})
+        if b:
+            ev["banner_url"] = b["banner_url"]
+    return {"events": events}
+
+@api.get("/events/past")
+async def events_past():
+    today = now_utc().strftime("%Y-%m-%d")
+    events = await _tec_fetch({"per_page": 50, "end_date": today, "status": "publish"})
+    events.sort(key=lambda e: e.get("start_date", ""), reverse=True)
+    for ev in events:
+        b = await db.event_banners.find_one({"event_id": ev["event_id"]}, {"_id": 0, "banner_url": 1})
+        if b:
+            ev["banner_url"] = b["banner_url"]
+    return {"events": events}
+
+@api.get("/events/detail/{event_id}")
+async def event_detail(event_id: str):
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            r = await hc.get(f"{TEC_BASE}/events/{event_id}")
+            if r.status_code != 200:
+                raise HTTPException(404, "Event not found")
+            ev = _tec_to_simple(r.json())
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "Event provider error")
+    b = await db.event_banners.find_one({"event_id": event_id}, {"_id": 0, "banner_url": 1})
+    if b:
+        ev["banner_url"] = b["banner_url"]
+    return ev
+
+class EventBannerIn(BaseModel):
+    banner_url: str
+
+@api.put("/events/banner/{event_id}")
+async def set_event_banner(event_id: str, data: EventBannerIn, user: dict = Depends(require_admin)):
+    await db.event_banners.update_one(
+        {"event_id": event_id},
+        {"$set": {"event_id": event_id, "banner_url": data.banner_url, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+    return {"ok": True, "event_id": event_id, "banner_url": data.banner_url}
+
+@api.delete("/events/banner/{event_id}")
+async def delete_event_banner(event_id: str, user: dict = Depends(require_admin)):
+    await db.event_banners.delete_one({"event_id": event_id})
+    return {"ok": True}
+
+# Event media gallery (photos/videos of past events)
+class EventMediaCreate(BaseModel):
+    kind: str  # "photo" or "video"
+    url: str
+    caption: str = ""
+    event_id: Optional[str] = None
+    event_title: Optional[str] = None
+
+@api.get("/events/media")
+async def list_event_media(kind: Optional[str] = None, event_id: Optional[str] = None):
+    q = {}
+    if kind in ("photo", "video"):
+        q["kind"] = kind
+    if event_id:
+        q["event_id"] = event_id
+    items = await db.event_media.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
+    return {"media": items}
+
+@api.post("/events/media")
+async def add_event_media(data: EventMediaCreate, user: dict = Depends(require_admin)):
+    if data.kind not in ("photo", "video"):
+        raise HTTPException(400, "kind must be photo or video")
+    m = {
+        "media_id": f"em_{uuid.uuid4().hex[:10]}",
+        **data.model_dump(),
+        "created_at": iso(now_utc()),
+    }
+    await db.event_media.insert_one(m)
+    m.pop("_id", None)
+    return m
+
+@api.delete("/events/media/{media_id}")
+async def delete_event_media(media_id: str, user: dict = Depends(require_admin)):
+    await db.event_media.delete_one({"media_id": media_id})
+    return {"ok": True}
+
+# ----------------- Legacy app-side events (kept for backwards compat) -----------------
 @api.get("/events")
 async def list_events():
     events = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(100)
@@ -956,6 +1085,37 @@ async def create_magazine(data: MagazineCreate, user: dict = Depends(require_adm
 @api.delete("/magazines/{magazine_id}")
 async def delete_magazine(magazine_id: str, user: dict = Depends(require_admin)):
     await db.magazines.delete_one({"magazine_id": magazine_id})
+    return {"ok": True}
+
+# ----------------- Events Gallery Links (admin-curated external galleries) -----------------
+class GalleryLinkCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    url: str = Field(min_length=3)
+    kind: str = "mixed"  # "photos" | "videos" | "mixed"
+    cover_image: Optional[str] = None
+    description: str = ""
+
+@api.get("/gallery/links")
+async def list_gallery_links():
+    items = await db.gallery_links.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"links": items}
+
+@api.post("/gallery/links")
+async def create_gallery_link(data: GalleryLinkCreate, user: dict = Depends(require_admin)):
+    if data.kind not in ("photos", "videos", "mixed"):
+        raise HTTPException(400, "kind must be photos, videos, or mixed")
+    g = {
+        "gallery_id": f"gl_{uuid.uuid4().hex[:10]}",
+        **data.model_dump(),
+        "created_at": iso(now_utc()),
+    }
+    await db.gallery_links.insert_one(g)
+    g.pop("_id", None)
+    return g
+
+@api.delete("/gallery/links/{gallery_id}")
+async def delete_gallery_link(gallery_id: str, user: dict = Depends(require_admin)):
+    await db.gallery_links.delete_one({"gallery_id": gallery_id})
     return {"ok": True}
 
 # ----------------- Social / Links -----------------

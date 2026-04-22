@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui-brutal";
-import { Users, ChatsCircle, Calendar, Newspaper, VideoCamera } from "@phosphor-icons/react";
+import { Users, ChatsCircle, Calendar, Newspaper, VideoCamera, FilmSlate } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 
 export default function Admin() {
@@ -42,8 +42,21 @@ export default function Admin() {
           <li>Create an event from the <Link to="/events" className="font-bold underline">Events page</Link>.</li>
           <li>Publish a newsletter from <Link to="/newsletters" className="font-bold underline">Otaku World</Link>.</li>
           <li>Add a video from the <Link to="/videos" className="font-bold underline">Videos page</Link>.</li>
+          <li>Add an external gallery link from the <Link to="/events-gallery" className="font-bold underline">Events Gallery page</Link>.</li>
         </ul>
       </Card>
+
+      <Link to="/events-gallery" data-testid="admin-events-gallery-shortcut">
+        <Card className="bg-[var(--accent)] flex items-center gap-3">
+          <div className="w-10 h-10 bg-black text-white border-2 border-black rounded-full flex items-center justify-center">
+            <FilmSlate size={18} weight="fill" />
+          </div>
+          <div className="flex-1">
+            <div className="font-black">Manage Events Gallery</div>
+            <div className="text-xs">Add external links to pages of photos or videos</div>
+          </div>
+        </Card>
+      </Link>
     </div>
   );
 }

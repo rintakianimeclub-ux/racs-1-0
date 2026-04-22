@@ -81,3 +81,14 @@
 
 ## Test credentials
 See `/app/memory/test_credentials.md`.
+
+## Changelog
+
+### 2026-04-22 — Events Gallery
+- **Home**: Quick tiles "Spotlight" and "Members" replaced with **Library** and **Gallery** (→ `/events-gallery`).
+- **New page `/events-gallery`** (`EventsGallery.jsx`):
+  - Top two prominent tiles — **Events** (→ `/events`) and **My Tickets** (→ `/tickets`) — mirroring More-page styling.
+  - Grid of admin-curated external gallery links (photos / videos / mixed) with thumbnails, kind badge, "Open gallery" external CTA.
+  - Admin-only "+ Add gallery link" modal with title / URL / kind / cover image / description fields; admin delete button on each card.
+- **Admin panel**: Added "Manage Events Gallery" shortcut card + quick-actions bullet pointing to `/events-gallery`.
+- **Backend**: New collection `gallery_links` + endpoints `GET/POST/DELETE /api/gallery/links` (admin-guarded writes).
