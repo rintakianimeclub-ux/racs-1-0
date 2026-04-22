@@ -1087,124 +1087,278 @@ async def delete_magazine(magazine_id: str, user: dict = Depends(require_admin))
     await db.magazines.delete_one({"magazine_id": magazine_id})
     return {"ok": True}
 
-# ----------------- Events Gallery Links (admin-curated external galleries) -----------------
-class GalleryLinkCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
-    url: str = Field(min_length=3)
-    kind: str = "mixed"  # "photos" | "videos" | "mixed"
-    cover_image: Optional[str] = None
-    description: str = ""
+# ----------------- Events Gallery (Event > Year > Gallery, scraped from NextGEN) -----------------
+NGG_BASE = "https://rintaki.org"
 
-@api.get("/gallery/links")
-async def list_gallery_links():
-    items = await db.gallery_links.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"links": items}
+def _split_camel(s: str) -> str:
+    """AnimeExpo -> Anime Expo, CherryBlossomFestival -> Cherry Blossom Festival"""
+    if not s:
+        return ""
+    import re
+    out = re.sub(r'([a-z])([A-Z])', r'\1 \2', s)
+    out = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', out)
+    return out.strip()
 
-@api.post("/gallery/links")
-async def create_gallery_link(data: GalleryLinkCreate, user: dict = Depends(require_admin)):
-    if data.kind not in ("photos", "videos", "mixed"):
-        raise HTTPException(400, "kind must be photos, videos, or mixed")
-    g = {
-        "gallery_id": f"gl_{uuid.uuid4().hex[:10]}",
-        **data.model_dump(),
-        "created_at": iso(now_utc()),
-    }
-    await db.gallery_links.insert_one(g)
-    g.pop("_id", None)
+def _parse_year_and_clean(title: str):
+    """'Cosplayers (2009)' -> ('2009', 'Cosplayers'); 'July 2, 2004' -> ('2004', 'July 2')."""
+    import re
+    t = (title or "").strip()
+    m = re.search(r'((?:19|20)\d{2})', t)
+    year = m.group(1) if m else ""
+    name = t
+    # strip "(YYYY)" or "YYYY"
+    name = re.sub(r'\(\s*(?:19|20)\d{2}\s*\)', '', name).strip()
+    name = re.sub(r',?\s*(?:19|20)\d{2}\s*$', '', name).strip()
+    name = re.sub(r'\s{2,}', ' ', name).strip(' ,-')
+    if not name:
+        name = t
+    return year, name
+
+import asyncio as _asyncio
+
+async def _http_get_with_retry(client: httpx.AsyncClient, url: str, retries: int = 2, backoff: float = 2.0):
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            r = await client.get(url)
+            if r.status_code == 503 and attempt < retries:
+                await _asyncio.sleep(backoff * (attempt + 1))
+                continue
+            return r
+        except Exception as e:
+            last_exc = e
+            if attempt < retries:
+                await _asyncio.sleep(backoff * (attempt + 1))
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    return r
+
+async def _scrape_ngg_gallery(url: str, client: Optional[httpx.AsyncClient] = None) -> dict:
+    """Fetch a NextGEN gallery page (following /page/N pagination) and return full image list + cover."""
+    from bs4 import BeautifulSoup
+    import re
+
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=30, headers={"User-Agent": "Mozilla/5.0 RintakiApp"}, follow_redirects=True)
+        close_client = True
+
+    try:
+        r = await _http_get_with_retry(client, url)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "lxml")
+        max_page = 1
+        for a in soup.select('.ngg-navigation a[href*="/page/"]'):
+            m = re.search(r'/page/(\d+)', a.get("href", ""))
+            if m:
+                max_page = max(max_page, int(m.group(1)))
+
+        def extract(soup_: BeautifulSoup):
+            out = []
+            for a in soup_.select(".ngg-gallery-thumbnail a"):
+                href = (a.get("href") or a.get("data-src") or "").strip()
+                if not href:
+                    continue
+                img = a.find("img")
+                thumb = (img.get("src") if img else None) or href
+                alt = (img.get("alt") if img else "") or ""
+                out.append({"url": href, "thumb": thumb, "caption": alt})
+            return out
+
+        images = extract(soup)
+        base = url.rstrip("/")
+        for p in range(2, max_page + 1):
+            await _asyncio.sleep(0.5)
+            try:
+                r2 = await _http_get_with_retry(client, f"{base}/page/{p}")
+                if r2.status_code != 200:
+                    continue
+                images.extend(extract(BeautifulSoup(r2.text, "lxml")))
+            except Exception:
+                continue
+    finally:
+        if close_client:
+            await client.aclose()
+
+    seen, dedup = set(), []
+    for im in images:
+        if im["url"] in seen:
+            continue
+        seen.add(im["url"])
+        dedup.append(im)
+    cover = dedup[0]["thumb"] if dedup else None
+    return {"images": dedup, "image_count": len(dedup), "cover_image": cover}
+
+class GalleryCreate(BaseModel):
+    event: str = Field(min_length=1, max_length=80)
+    year: str = ""
+    name: str = Field(min_length=1, max_length=120)
+    imagely_id: Optional[int] = None
+    source_url: Optional[str] = None  # Optional if imagely_id is provided
+    order: int = 0
+
+@api.get("/galleries")
+async def list_galleries():
+    items = await db.galleries.find({}, {"_id": 0, "images": 0}).to_list(500)
+    # sort: event asc, year desc, name asc
+    items.sort(key=lambda g: (g.get("event", ""), -(int(g["year"]) if (g.get("year") or "").isdigit() else 0), g.get("name", "")))
+    return {"galleries": items}
+
+@api.get("/galleries/{gallery_id}")
+async def get_gallery(gallery_id: str):
+    g = await db.galleries.find_one({"gallery_id": gallery_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Gallery not found")
     return g
 
-@api.delete("/gallery/links/{gallery_id}")
-async def delete_gallery_link(gallery_id: str, user: dict = Depends(require_admin)):
-    await db.gallery_links.delete_one({"gallery_id": gallery_id})
+@api.post("/galleries")
+async def create_gallery(data: GalleryCreate, user: dict = Depends(require_admin)):
+    src = data.source_url
+    if not src and data.imagely_id:
+        src = f"{NGG_BASE}/gallery/nggallery/gallery/{data.imagely_id}"
+    if not src:
+        raise HTTPException(400, "Either source_url or imagely_id must be provided")
+    try:
+        scrape = await _scrape_ngg_gallery(src)
+    except Exception as e:
+        raise HTTPException(400, f"Could not scrape gallery: {e}")
+    if scrape["image_count"] == 0:
+        raise HTTPException(400, "No images found at that URL. Check the gallery ID or URL.")
+    doc = {
+        "gallery_id": f"g_{uuid.uuid4().hex[:10]}",
+        "event": data.event.strip(),
+        "year": data.year.strip(),
+        "name": data.name.strip(),
+        "imagely_id": data.imagely_id,
+        "source_url": src,
+        "cover_image": scrape["cover_image"],
+        "images": scrape["images"],
+        "image_count": scrape["image_count"],
+        "order": data.order,
+        "created_at": iso(now_utc()),
+        "last_synced_at": iso(now_utc()),
+    }
+    await db.galleries.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.post("/galleries/{gallery_id}/refresh")
+async def refresh_gallery(gallery_id: str, user: dict = Depends(require_admin)):
+    g = await db.galleries.find_one({"gallery_id": gallery_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Gallery not found")
+    try:
+        scrape = await _scrape_ngg_gallery(g["source_url"])
+    except Exception as e:
+        raise HTTPException(400, f"Could not re-scrape: {e}")
+    await db.galleries.update_one({"gallery_id": gallery_id}, {"$set": {
+        "cover_image": scrape["cover_image"] or g.get("cover_image"),
+        "images": scrape["images"],
+        "image_count": scrape["image_count"],
+        "last_synced_at": iso(now_utc()),
+    }})
+    return {"ok": True, "image_count": scrape["image_count"]}
+
+@api.delete("/galleries/{gallery_id}")
+async def delete_gallery(gallery_id: str, user: dict = Depends(require_admin)):
+    await db.galleries.delete_one({"gallery_id": gallery_id})
     return {"ok": True}
 
-class GallerySyncRequest(BaseModel):
-    source_url: str  # WP page URL containing the NextGEN album shortcode (e.g. https://rintaki.org/gallery/)
-    section_filter: Optional[str] = None  # if set, only import galleries under this h2/h3 section (e.g. "AnimeMilwaukee")
-    replace: bool = False  # if True, clear existing sync'd cards first
+class GallerySyncAll(BaseModel):
+    source_url: str = f"{NGG_BASE}/gallery/"
+    replace: bool = False
+    max_galleries: int = 50
 
-@api.post("/gallery/links/sync")
-async def sync_gallery_links(data: GallerySyncRequest, user: dict = Depends(require_admin)):
-    try:
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0 RintakiApp"}, follow_redirects=True) as c:
-            r = await c.get(data.source_url)
-            r.raise_for_status()
-            html = r.text
-    except Exception as e:
-        raise HTTPException(400, f"Could not fetch source URL: {e}")
-
+async def _run_sync_job(job_id: str, data: GallerySyncAll):
     from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html, "lxml")
-    anchors = soup.select('a[href*="/nggallery/album/"]')
-    if not anchors:
-        raise HTTPException(400, "No NextGEN gallery links found on that page. Make sure the page uses an Imagely NextGEN album shortcode.")
+    await db.sync_jobs.update_one({"job_id": job_id}, {"$set": {"status": "running", "started_at": iso(now_utc())}})
+    try:
+        async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "Mozilla/5.0 RintakiApp"}, follow_redirects=True) as shared:
+            r = await shared.get(data.source_url)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            anchors = soup.select('a[href*="/nggallery/album/"]')
+            discovered = {}
+            for a in anchors:
+                href = (a.get("href") or "").strip()
+                if not href or href in discovered:
+                    continue
+                title = (a.get("title") or a.get_text(strip=True) or "Gallery").strip()
+                section = None
+                for prev in a.find_all_previous(["h2", "h3"]):
+                    section = prev.get_text(strip=True)
+                    break
+                discovered[href] = {"title": title, "section": section}
 
-    # Build unique gallery list with parent section
-    seen = {}
-    for a in anchors:
-        href = (a.get("href") or "").strip()
-        if not href or href in seen:
-            continue
-        img = a.find("img")
-        title = (a.get("title") or a.get_text(strip=True) or "Gallery").strip()
-        section = None
-        for prev in a.find_all_previous(["h2", "h3"]):
-            section = prev.get_text(strip=True)
-            break
-        # photo count sits in a sibling <p class="ngg-album-gallery-image-counter">
-        count = None
-        parent = a
-        for _ in range(5):
-            parent = parent.parent
-            if parent is None:
-                break
-            ctag = parent.find("p", class_="ngg-album-gallery-image-counter")
-            if ctag:
-                strong = ctag.find("strong")
-                if strong and strong.get_text(strip=True).isdigit():
-                    count = int(strong.get_text(strip=True))
-                break
-        seen[href] = {
-            "title": title,
-            "cover_image": (img.get("src") if img else None),
-            "section": section,
-            "photo_count": count,
-        }
+            if data.replace:
+                await db.galleries.delete_many({"auto_synced": True})
 
-    if data.section_filter:
-        seen = {k: v for k, v in seen.items() if (v["section"] or "").lower() == data.section_filter.lower()}
+            total = min(len(discovered), data.max_galleries)
+            await db.sync_jobs.update_one({"job_id": job_id}, {"$set": {"total": total, "discovered": len(discovered)}})
 
-    if not seen:
-        raise HTTPException(400, "No matching galleries found.")
+            created, skipped, failed, processed = 0, 0, [], 0
+            for href, meta in list(discovered.items())[: data.max_galleries]:
+                processed += 1
+                existing = await db.galleries.find_one({"source_url": href})
+                if existing:
+                    skipped += 1
+                else:
+                    try:
+                        scrape = await _scrape_ngg_gallery(href, client=shared)
+                        if scrape["image_count"] == 0:
+                            failed.append(href)
+                        else:
+                            event = _split_camel(meta["section"] or "Other")
+                            year, name = _parse_year_and_clean(meta["title"])
+                            await db.galleries.insert_one({
+                                "gallery_id": f"g_{uuid.uuid4().hex[:10]}",
+                                "event": event, "year": year, "name": name,
+                                "imagely_id": None, "source_url": href,
+                                "cover_image": scrape["cover_image"],
+                                "images": scrape["images"],
+                                "image_count": scrape["image_count"],
+                                "order": 0, "auto_synced": True,
+                                "created_at": iso(now_utc()),
+                                "last_synced_at": iso(now_utc()),
+                            })
+                            created += 1
+                    except Exception:
+                        failed.append(href)
+                await db.sync_jobs.update_one({"job_id": job_id}, {"$set": {
+                    "processed": processed, "created": created, "skipped": skipped,
+                    "failed_count": len(failed), "current": meta["title"],
+                }})
+                await _asyncio.sleep(0.8)
 
-    if data.replace:
-        await db.gallery_links.delete_many({"synced": True})
+        await db.sync_jobs.update_one({"job_id": job_id}, {"$set": {
+            "status": "done", "finished_at": iso(now_utc()),
+            "created": created, "skipped": skipped, "failed": failed,
+        }})
+    except Exception as e:
+        await db.sync_jobs.update_one({"job_id": job_id}, {"$set": {
+            "status": "error", "error": str(e), "finished_at": iso(now_utc()),
+        }})
 
-    created = 0
-    skipped = 0
-    for href, g in seen.items():
-        # Skip duplicates by URL
-        exists = await db.gallery_links.find_one({"url": href})
-        if exists:
-            skipped += 1
-            continue
-        doc = {
-            "gallery_id": f"gl_{uuid.uuid4().hex[:10]}",
-            "title": g["title"],
-            "url": href,
-            "kind": "photos",
-            "cover_image": g["cover_image"],
-            "description": (f"{g['photo_count']} Photos" if g["photo_count"] else "") + (f" · {g['section']}" if g["section"] else ""),
-            "section": g["section"],
-            "photo_count": g["photo_count"],
-            "synced": True,
-            "source_url": data.source_url,
-            "created_at": iso(now_utc()),
-        }
-        await db.gallery_links.insert_one(doc)
-        created += 1
+@api.post("/galleries/sync")
+async def sync_all_galleries(data: GallerySyncAll, user: dict = Depends(require_admin)):
+    """Start a background sync job. Returns a job_id to poll."""
+    job_id = f"sj_{uuid.uuid4().hex[:10]}"
+    await db.sync_jobs.insert_one({
+        "job_id": job_id, "status": "queued", "source_url": data.source_url,
+        "processed": 0, "created": 0, "skipped": 0, "failed_count": 0, "total": 0,
+        "created_at": iso(now_utc()),
+    })
+    _asyncio.create_task(_run_sync_job(job_id, data))
+    return {"job_id": job_id, "status": "queued"}
 
-    return {"created": created, "skipped": skipped, "total_found": len(seen)}
+@api.get("/galleries/sync/status/{job_id}")
+async def sync_job_status(job_id: str, user: dict = Depends(require_admin)):
+    j = await db.sync_jobs.find_one({"job_id": job_id}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return j
 
 # ----------------- Social / Links -----------------
 @api.get("/links")

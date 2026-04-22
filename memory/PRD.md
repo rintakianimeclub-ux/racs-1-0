@@ -84,11 +84,16 @@ See `/app/memory/test_credentials.md`.
 
 ## Changelog
 
-### 2026-04-22 — Events Gallery
-- **Home**: Quick tiles "Spotlight" and "Members" replaced with **Library** and **Gallery** (→ `/events-gallery`).
-- **New page `/events-gallery`** (`EventsGallery.jsx`):
-  - Top two prominent tiles — **Events** (→ `/events`) and **My Tickets** (→ `/tickets`) — mirroring More-page styling.
-  - Grid of admin-curated external gallery links (photos / videos / mixed) with thumbnails, kind badge, "Open gallery" external CTA.
-  - Admin-only "+ Add gallery link" modal with title / URL / kind / cover image / description fields; admin delete button on each card.
-- **Admin panel**: Added "Manage Events Gallery" shortcut card + quick-actions bullet pointing to `/events-gallery`.
-- **Backend**: New collection `gallery_links` + endpoints `GET/POST/DELETE /api/gallery/links` (admin-guarded writes).
+### 2026-04-22 — Events Gallery v2 (full rebuild)
+- **New hierarchical model** `Event > Year > Gallery` — replaces the flat link-list approach.
+- **New `galleries` MongoDB collection**: `{event, year, name, imagely_id, source_url, cover_image, images[], image_count, auto_synced, last_synced_at}`.
+- **Backend scrape engine** (`_scrape_ngg_gallery`): follows NextGEN `/page/N` pagination, 503-retry with backoff, shared httpx client, 0.8s throttle between galleries.
+- **Background sync job**: `POST /api/galleries/sync` returns `{job_id}` immediately; progress polled at `GET /api/galleries/sync/status/{job_id}`. Successfully imports all 15 rintaki.org galleries with full pagination (120/95/114/69-photo galleries now complete).
+- **Endpoints**: `GET /api/galleries`, `GET /api/galleries/{id}`, `POST /api/galleries` (admin; takes event/year/name + imagely_id OR source_url), `POST /api/galleries/{id}/refresh`, `DELETE /api/galleries/{id}`.
+- **Imagely ID convenience**: when admin enters just the numeric gallery ID, app derives URL `https://rintaki.org/gallery/nggallery/gallery/{id}` and pulls images.
+- **Frontend rewrite** (`EventsGallery.jsx`):
+  - Event headings → sticky year badges → 2-column gallery card grid.
+  - Tap card → in-app fullscreen **Viewer** (prev/next buttons, keyboard arrows, swipe gestures, thumbnail strip, image counter). No external link.
+  - Admin: "Sync from rintaki.org" (with live progress bar + "Now: {gallery}" status), "Add by ID" (event/year/name + imagely_id OR URL), per-card refresh + delete.
+- Old `gallery_links` endpoints and collection removed.
+
