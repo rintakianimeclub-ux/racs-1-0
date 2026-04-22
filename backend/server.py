@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import logging
+import time as _time
 import uuid
 import secrets
 import bcrypt
@@ -133,6 +134,9 @@ async def add_points(user_id: str, amount: int, reason: str):
         "kind": "points",
         "created_at": iso(now_utc()),
     })
+    u = await db.users.find_one({"user_id": user_id}, {"email": 1, "_id": 0})
+    if u and u.get("email"):
+        await mycred_adjust(u["email"], os.environ.get("RINTAKI_MYCRED_POINTS_TYPE", "mycred_default"), amount, reason)
 
 async def add_anime_cash(user_id: str, amount: int, reason: str):
     await db.users.update_one({"user_id": user_id}, {"$inc": {"anime_cash": amount}})
@@ -144,6 +148,71 @@ async def add_anime_cash(user_id: str, amount: int, reason: str):
         "kind": "anime_cash",
         "created_at": iso(now_utc()),
     })
+    u = await db.users.find_one({"user_id": user_id}, {"email": 1, "_id": 0})
+    if u and u.get("email"):
+        await mycred_adjust(u["email"], os.environ.get("RINTAKI_MYCRED_CASH_TYPE", "anime_cash"), amount, reason)
+
+# ----------------- MyCred (rintaki.org) sync -----------------
+_mycred_cache: dict = {}  # email -> (ts, points, anime_cash)
+MYCRED_TTL = 30  # seconds
+
+async def mycred_balance(email: str) -> dict:
+    """Fetch live MyCred balance from rintaki.org with a tiny cache."""
+    if not email:
+        return {"found": False}
+    base = os.environ.get("RINTAKI_WP_BASE_URL")
+    key = os.environ.get("RINTAKI_WP_KEY")
+    if not base or not key:
+        return {"found": False}
+    now_ts = _time.time()
+    cached = _mycred_cache.get(email)
+    if cached and now_ts - cached[0] < MYCRED_TTL:
+        return {"found": True, "points": cached[1], "anime_cash": cached[2], "cached": True}
+    try:
+        async with httpx.AsyncClient(timeout=5) as hc:
+            r = await hc.get(
+                f"{base.rstrip('/')}/wp-json/rintaki/v1/balance",
+                params={"email": email},
+                headers={"X-Rintaki-Key": key},
+            )
+            if r.status_code != 200:
+                return {"found": False}
+            data = r.json() if r.text else {}
+            if data.get("found"):
+                _mycred_cache[email] = (now_ts, int(data.get("points", 0)), int(data.get("anime_cash", 0)))
+            return data
+    except Exception as e:
+        logger.warning(f"mycred_balance failed: {e}")
+        return {"found": False}
+
+async def mycred_adjust(email: str, type_slug: str, amount: int, reason: str) -> None:
+    """Push a point adjustment to MyCred on rintaki.org. Fire-and-forget."""
+    if not email or amount == 0:
+        return
+    base = os.environ.get("RINTAKI_WP_BASE_URL")
+    key = os.environ.get("RINTAKI_WP_KEY")
+    if not base or not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5) as hc:
+            await hc.post(
+                f"{base.rstrip('/')}/wp-json/rintaki/v1/adjust",
+                params={"email": email, "type": type_slug, "amount": amount, "reason": reason},
+                headers={"X-Rintaki-Key": key},
+            )
+        _mycred_cache.pop(email, None)
+    except Exception as e:
+        logger.warning(f"mycred_adjust failed: {e}")
+
+async def public_user_enriched(u: dict) -> dict:
+    """Return public_user(u) but overwrite points/anime_cash with MyCred when available."""
+    base = public_user(u)
+    bal = await mycred_balance(u.get("email", ""))
+    if bal.get("found"):
+        base["points"] = bal["points"]
+        base["anime_cash"] = bal["anime_cash"]
+        base["synced_with_mycred"] = True
+    return base
 
 async def push_notification(user_id: str, title: str, body: str, kind: str = "info", link: Optional[str] = None):
     await db.notifications.insert_one({
@@ -411,7 +480,7 @@ async def logout(request: Request, response: Response):
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return public_user(user)
+    return await public_user_enriched(user)
 
 @api.post("/auth/google/session")
 async def google_session(request: Request, response: Response, x_session_id: Optional[str] = Header(None, alias="X-Session-ID")):
@@ -482,7 +551,7 @@ async def get_user(user_id: str):
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
         raise HTTPException(404, "User not found")
-    return public_user(u)
+    return await public_user_enriched(u)
 
 # ----------------- Rintaki Feed -----------------
 @api.get("/rintaki/forum")
@@ -678,7 +747,22 @@ async def like_thread(thread_id: str, user: dict = Depends(get_current_user)):
 @api.get("/points/me")
 async def my_points(user: dict = Depends(get_current_user)):
     txs = await db.points_transactions.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    return {"points": user.get("points", 0), "transactions": txs, "badges": user.get("badges", [])}
+    bal = await mycred_balance(user.get("email", ""))
+    if bal.get("found"):
+        return {
+            "points": bal["points"],
+            "anime_cash": bal["anime_cash"],
+            "transactions": txs,
+            "badges": user.get("badges", []),
+            "synced_with_mycred": True,
+        }
+    return {
+        "points": user.get("points", 0),
+        "anime_cash": user.get("anime_cash", 0),
+        "transactions": txs,
+        "badges": user.get("badges", []),
+        "synced_with_mycred": False,
+    }
 
 @api.post("/points/daily-claim")
 async def daily_claim(user: dict = Depends(get_current_user)):
