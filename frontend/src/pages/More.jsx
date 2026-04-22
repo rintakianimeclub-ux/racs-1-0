@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui-brutal";
 import {
-  Calendar, BookOpen, Buildings, Ticket, ShieldStar, CaretRight, SignOut, HouseLine,
+  Calendar, BookOpen, Buildings, Ticket, ShieldStar, CaretRight, SignOut, HouseLine, SignIn, Sparkle,
   TiktokLogo, InstagramLogo, TwitterLogo, FacebookLogo, YoutubeLogo, DiscordLogo,
 } from "@phosphor-icons/react";
 
@@ -17,6 +17,7 @@ const TILES = [
 
 export default function More() {
   const { user, logout } = useAuth();
+  const isMember = !!user && (user.role === "admin" || user.is_member);
   const [links, setLinks] = useState({ social: {} });
   useEffect(() => { api.get("/links").then(({ data }) => setLinks(data)).catch(() => {}); }, []);
 
@@ -40,13 +41,28 @@ export default function More() {
         </Link>
       )}
 
-      {user && (
+      {/* Members Dashboard — only for actual members */}
+      {isMember && (
         <Link to="/dashboard" data-testid="more-members-panel">
           <Card className="bg-[var(--primary)] text-white flex items-center gap-3">
             <div className="w-10 h-10 bg-white text-black border-2 border-black rounded-full flex items-center justify-center"><ShieldStar size={18} weight="fill" /></div>
             <div className="flex-1">
               <div className="font-black">Members Dashboard</div>
               <div className="text-xs opacity-90">Members-only features & trips</div>
+            </div>
+            <CaretRight size={18} weight="bold" />
+          </Card>
+        </Link>
+      )}
+
+      {/* Non-member: show Join CTA */}
+      {!isMember && (
+        <Link to="/join" data-testid="more-join-cta">
+          <Card className="bg-[var(--primary)] text-white flex items-center gap-3">
+            <div className="w-10 h-10 bg-[var(--secondary)] text-black border-2 border-black rounded-full flex items-center justify-center"><Sparkle size={18} weight="fill" /></div>
+            <div className="flex-1">
+              <div className="font-black">Become a member</div>
+              <div className="text-xs opacity-90">Unlock points, dashboard & perks</div>
             </div>
             <CaretRight size={18} weight="bold" />
           </Card>
@@ -88,10 +104,18 @@ export default function More() {
         </Card>
       </a>
 
-      <button onClick={logout} data-testid="logout-action"
-              className="w-full bg-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
-        <SignOut size={16} weight="bold" /> Logout
-      </button>
+      {user ? (
+        <button onClick={logout} data-testid="logout-action"
+                className="w-full bg-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+          <SignOut size={16} weight="bold" /> Logout
+        </button>
+      ) : (
+        <Link to="/login" data-testid="more-login-link">
+          <button className="w-full bg-black text-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+            <SignIn size={16} weight="bold" /> Sign in / Register
+          </button>
+        </Link>
+      )}
     </div>
   );
 }
@@ -107,3 +131,4 @@ function SocialTile({ url, icon: Icon, label }) {
     </a>
   );
 }
+

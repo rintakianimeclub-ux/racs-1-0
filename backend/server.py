@@ -79,6 +79,9 @@ def public_user(u: dict) -> dict:
         "anime_cash": u.get("anime_cash", 0),
         "badges": u.get("badges", []),
         "bio": u.get("bio", ""),
+        "is_member": bool(u.get("is_member", False) or u.get("role") == "admin"),
+        "membership_level": int(u.get("membership_level", 0) or 0),
+        "membership_name": u.get("membership_name") or "",
         "created_at": u.get("created_at"),
     }
 
@@ -124,6 +127,21 @@ async def require_admin(user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Admin access required")
     return user
 
+async def get_current_user_optional(request: Request) -> Optional[dict]:
+    """Same as get_current_user but returns None instead of raising for unauthenticated requests."""
+    try:
+        return await get_current_user(request)
+    except HTTPException:
+        return None
+
+async def require_member(user: dict = Depends(get_current_user)):
+    """Gate for features that require a paid PMPro membership (admins always allowed)."""
+    if user.get("role") == "admin":
+        return user
+    if not user.get("is_member") and int(user.get("membership_level", 0) or 0) <= 0:
+        raise HTTPException(403, "This feature is for members only. Join the club to unlock it.")
+    return user
+
 async def add_points(user_id: str, amount: int, reason: str):
     await db.users.update_one({"user_id": user_id}, {"$inc": {"points": amount}})
     await db.points_transactions.insert_one({
@@ -157,7 +175,7 @@ _mycred_cache: dict = {}  # email -> (ts, points, anime_cash)
 MYCRED_TTL = 30  # seconds
 
 async def mycred_balance(email: str) -> dict:
-    """Fetch live MyCred balance from rintaki.org with a tiny cache."""
+    """Fetch live MyCred balance + PMPro membership level from rintaki.org with a tiny cache."""
     if not email:
         return {"found": False}
     base = os.environ.get("RINTAKI_WP_BASE_URL")
@@ -167,7 +185,10 @@ async def mycred_balance(email: str) -> dict:
     now_ts = _time.time()
     cached = _mycred_cache.get(email)
     if cached and now_ts - cached[0] < MYCRED_TTL:
-        return {"found": True, "points": cached[1], "anime_cash": cached[2], "cached": True}
+        return {
+            "found": True, "points": cached[1], "anime_cash": cached[2],
+            "membership_level": cached[3], "membership_name": cached[4], "cached": True,
+        }
     try:
         async with httpx.AsyncClient(timeout=5) as hc:
             r = await hc.get(
@@ -179,7 +200,13 @@ async def mycred_balance(email: str) -> dict:
                 return {"found": False}
             data = r.json() if r.text else {}
             if data.get("found"):
-                _mycred_cache[email] = (now_ts, int(data.get("points", 0)), int(data.get("anime_cash", 0)))
+                _mycred_cache[email] = (
+                    now_ts,
+                    int(data.get("points", 0)),
+                    int(data.get("anime_cash", 0)),
+                    int(data.get("membership_level", 0) or 0),
+                    data.get("membership_name") or "",
+                )
             return data
     except Exception as e:
         logger.warning(f"mycred_balance failed: {e}")
@@ -205,13 +232,28 @@ async def mycred_adjust(email: str, type_slug: str, amount: int, reason: str) ->
         logger.warning(f"mycred_adjust failed: {e}")
 
 async def public_user_enriched(u: dict) -> dict:
-    """Return public_user(u) but overwrite points/anime_cash with MyCred when available."""
+    """Return public_user(u) but overwrite points/anime_cash/membership with MyCred when available."""
     base = public_user(u)
     bal = await mycred_balance(u.get("email", ""))
     if bal.get("found"):
         base["points"] = bal["points"]
         base["anime_cash"] = bal["anime_cash"]
         base["synced_with_mycred"] = True
+        lvl = int(bal.get("membership_level", 0) or 0)
+        if lvl > 0:
+            base["membership_level"] = lvl
+            base["membership_name"] = bal.get("membership_name") or base.get("membership_name") or ""
+            base["is_member"] = True
+            # Persist to DB so subsequent requests without WP also see member status
+            await db.users.update_one(
+                {"user_id": u["user_id"]},
+                {"$set": {
+                    "is_member": True,
+                    "membership_level": lvl,
+                    "membership_name": base["membership_name"],
+                    "membership_synced_at": iso(now_utc()),
+                }},
+            )
     return base
 
 async def push_notification(user_id: str, title: str, body: str, kind: str = "info", link: Optional[str] = None):
@@ -679,7 +721,7 @@ async def list_threads(category: Optional[str] = None):
     return {"threads": threads}
 
 @api.post("/forums/threads")
-async def create_thread(data: ThreadCreate, user: dict = Depends(get_current_user)):
+async def create_thread(data: ThreadCreate, user: dict = Depends(require_member)):
     t = {
         "thread_id": f"th_{uuid.uuid4().hex[:10]}",
         "title": data.title,
@@ -707,7 +749,7 @@ async def get_thread(thread_id: str):
     return {"thread": t, "replies": replies}
 
 @api.post("/forums/threads/{thread_id}/replies")
-async def reply_thread(thread_id: str, data: ReplyCreate, user: dict = Depends(get_current_user)):
+async def reply_thread(thread_id: str, data: ReplyCreate, user: dict = Depends(require_member)):
     t = await db.forum_threads.find_one({"thread_id": thread_id})
     if not t:
         raise HTTPException(404, "Thread not found")
@@ -730,7 +772,7 @@ async def reply_thread(thread_id: str, data: ReplyCreate, user: dict = Depends(g
     return reply
 
 @api.post("/forums/threads/{thread_id}/like")
-async def like_thread(thread_id: str, user: dict = Depends(get_current_user)):
+async def like_thread(thread_id: str, user: dict = Depends(require_member)):
     t = await db.forum_threads.find_one({"thread_id": thread_id})
     if not t:
         raise HTTPException(404, "Thread not found")
@@ -765,7 +807,7 @@ async def my_points(user: dict = Depends(get_current_user)):
     }
 
 @api.post("/points/daily-claim")
-async def daily_claim(user: dict = Depends(get_current_user)):
+async def daily_claim(user: dict = Depends(require_member)):
     today = now_utc().date().isoformat()
     try:
         await db.daily_logins.insert_one({"user_id": user["user_id"], "date": today, "created_at": iso(now_utc())})
@@ -1360,6 +1402,74 @@ async def sync_job_status(job_id: str, user: dict = Depends(require_admin)):
         raise HTTPException(404, "Job not found")
     return j
 
+MEMBERSHIP_LEVELS = [
+    {
+        "level": 1, "name": "Free", "price": "$0", "interval": "mo", "tier": "free",
+        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=1",
+        "benefits": [
+            "Member ID Card", "50 Points per month", "Earn Anime Cash",
+            "Official Club Shirt (1)", "Library Access", "Anime Poster",
+            "Anime Merch (if available)", "Trading Card Member Starter Pack (5)",
+        ],
+    },
+    {
+        "level": 2, "name": "Regular", "price": "$19.99", "interval": "mo", "tier": "regular",
+        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=2",
+        "benefits": [
+            "PVC Member ID Card (no photo)", "50 points per month", "$5.00 Anime Cash every month",
+            "Official Club Shirt (1)", "Library Access", "Anime Poster",
+            "Access to Crunchyroll Account", "Anime Give Away Entry (1)",
+            "Gift Card Give Away Entry (1)", "Anime Keychain (1)",
+            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
+            "Trading Card Member Starter Pack (5)", "Trading Card Member Booster Pack (10)",
+        ],
+    },
+    {
+        "level": 3, "name": "Regular (Yearly)", "price": "$239.88", "interval": "yr", "tier": "regular",
+        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=3",
+        "benefits": [
+            "PVC Member ID Card (no photo)", "50 points per month", "$5.00 Anime Cash every month",
+            "Official Club Shirt (1)", "Library Access", "Anime Poster",
+            "Access to Crunchyroll Account", "Anime Give Away Entry (1)",
+            "Gift Card Give Away Entry (1)", "Anime Keychain (1)",
+            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
+            "Trading Card Member Starter Pack (5)", "Trading Card Booster Pack (10)",
+            "Trading Card Booster Pack (15)",
+        ],
+    },
+    {
+        "level": 4, "name": "Premium", "price": "$39.99", "interval": "mo", "tier": "premium",
+        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=4",
+        "benefits": [
+            "PVC Member ID Card (any option)", "100 points per month", "$10.00 Anime Cash every month",
+            "Official Club Shirt (1)", "Library Access", "Anime Poster",
+            "Access to Crunchyroll Account", "Access to HiDive Account",
+            "Anime Give Away Entry (2)", "Gift Card Give Away Entry (2)", "Anime Keychain (2)",
+            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
+            "Movie Tickets", "Trading Card Member Starter Pack (5)",
+            "Trading Card Booster Pack (15)", "Trading Card Starter Pack (25)",
+        ],
+    },
+    {
+        "level": 5, "name": "Premium (Yearly)", "price": "$479.88", "interval": "yr", "tier": "premium",
+        "checkout_url": "https://rintaki.org/membership-account/membership-checkout/?pmpro_level=5",
+        "benefits": [
+            "PVC Member ID Card (any option)", "100 points per month", "$10.00 Anime Cash every month",
+            "Official Club Shirt (1)", "Library Access", "Anime Poster",
+            "Access to Crunchyroll Account", "Access to HiDive Account",
+            "Anime Give Away Entry (2)", "Gift Card Give Away Entry (2)", "Anime Keychain (2)",
+            "Otaku World Newsletter (print)", "Members Only Discounts", "Members Only Dinners",
+            "Movie Tickets", "Trading Card Member Starter Pack (5)",
+            "Trading Card Booster Pack (20)", "Trading Card Starter Pack (25)",
+        ],
+    },
+]
+
+@api.get("/memberships/levels")
+async def list_membership_levels():
+    return {"levels": MEMBERSHIP_LEVELS}
+
+
 # ----------------- Social / Links -----------------
 @api.get("/links")
 async def get_links():
@@ -1391,7 +1501,7 @@ async def list_posts(user: dict = Depends(get_current_user)):
     return {"posts": posts}
 
 @api.post("/feed/posts")
-async def create_post(data: MediaPostCreate, user: dict = Depends(get_current_user)):
+async def create_post(data: MediaPostCreate, user: dict = Depends(require_member)):
     if data.media_type not in ("image", "video"):
         raise HTTPException(400, "media_type must be image or video")
     p = {

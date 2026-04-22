@@ -84,7 +84,27 @@ See `/app/memory/test_credentials.md`.
 
 ## Changelog
 
-### 2026-04-22 — Events Gallery v2 (full rebuild)
+### 2026-04-22 — Public-first app + PMPro membership gating
+- **Anonymous browsing enabled**. Home, Forums, Forum threads, Events, Event detail, Events Gallery, TCG hub, TCG collections, Magazines, Library, Newsletters, Videos, and /more are now all publicly accessible without login.
+- **Auth-gated (any logged-in user)**: Profile, Notifications, Tickets, Spotlight feed.
+- **Member-gated (PMPro level ≥ 1 OR admin)**: Points, Messages, Members directory, Dashboard + all dashboard sub-pages, TCG claim/trade-in/trade, daily claim, posting/replying/liking in the forum.
+- **Backend**:
+  - `public_user()` now exposes `is_member`, `membership_level`, `membership_name` (admins auto `is_member=True`).
+  - New `require_member` dependency → returns HTTP 403 `"This feature is for members only. Join the club to unlock it."` for non-members.
+  - New `get_current_user_optional` helper for endpoints that want user context without requiring auth.
+  - `mycred_balance()` now also returns PMPro `membership_level` + `membership_name`.
+  - `public_user_enriched()` persists PMPro level to Mongo on every `/auth/me` hit (auto-promotes user to member once they buy via rintaki.org).
+  - New endpoint `GET /api/memberships/levels` returns all 5 PMPro tiers (Free $0/mo, Regular $19.99/mo & $239.88/yr, Premium $39.99/mo & $479.88/yr) with benefits and `pmpro_level=N` checkout URLs.
+- **Frontend**:
+  - `Layout.jsx`: Top-bar points/cash pills hidden for non-members; "SIGN IN" CTA replaces pills for anonymous. Bottom tab #4 is **JOIN** (anonymous) or **SPOTLIGHT** (logged-in).
+  - `Home.jsx`: Anonymous/non-member hero replaces username greeting and claim-daily button with "See membership benefits" CTA + "Already a member? Sign in".
+  - `Forums.jsx`: "New thread" button replaced with "Join to post" link for non-members.
+  - `More.jsx`: Members Dashboard card hidden for non-members — replaced with "Become a member" CTA. Logout button → "Sign in / Register" for anonymous.
+  - New page `Join.jsx` at `/join` — shows all 5 PMPro tiers with benefits + deep-links to `https://rintaki.org/membership-account/membership-checkout/?pmpro_level=N`.
+  - `App.js` route matrix refactored into `Public` / `Protected` / `MemberOnly` wrappers.
+- **WP plugin `rintaki-app-sync.php` v1.1.0**: Now returns `membership_level` + `membership_name` in the balance response via PMPro's `pmpro_getMembershipLevelForUser()`. Once you install this updated plugin on rintaki.org, members who complete PMPro checkout will auto-sync to member status on their next app request.
+
+
 - **New hierarchical model** `Event > Year > Gallery` — replaces the flat link-list approach.
 - **New `galleries` MongoDB collection**: `{event, year, name, imagely_id, source_url, cover_image, images[], image_count, auto_synced, last_synced_at}`.
 - **Backend scrape engine** (`_scrape_ngg_gallery`): follows NextGEN `/page/N` pagination, 503-retry with backoff, shared httpx client, 0.8s throttle between galleries.

@@ -2,9 +2,12 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Card, Sticker, Button, Avatar } from "@/components/ui-brutal";
+import { Card, Sticker, Button } from "@/components/ui-brutal";
 import Logo from "@/components/Logo";
-import { Fire, Calendar, ArrowUpRight, Trophy, ChatsCircle, Newspaper, Lightning, BookOpen, Images, Gift, CurrencyCircleDollar, Buildings, FilmSlate } from "@phosphor-icons/react";
+import {
+  Fire, Calendar, ArrowUpRight, Trophy, Lightning,
+  BookOpen, Buildings, FilmSlate, SignIn, Sparkle, CurrencyCircleDollar,
+} from "@phosphor-icons/react";
 
 function stripHtml(html = "") {
   const d = document.createElement("div");
@@ -14,28 +17,27 @@ function stripHtml(html = "") {
 
 export default function Home() {
   const { user } = useAuth();
+  const isMember = !!user && (user.role === "admin" || user.is_member);
+
   const [feed, setFeed] = useState([]);
   const [events, setEvents] = useState([]);
   const [threads, setThreads] = useState([]);
   const [magazines, setMagazines] = useState([]);
-  const [posts, setPosts] = useState([]);
   const [claimed, setClaimed] = useState(false);
   const [claimMsg, setClaimMsg] = useState("");
 
   useEffect(() => {
     (async () => {
-      const [f, e, t, m, p] = await Promise.all([
+      const [f, e, t, m] = await Promise.all([
         api.get("/rintaki/feed").catch(() => ({ data: { posts: [] } })),
         api.get("/events").catch(() => ({ data: { events: [] } })),
         api.get("/forums/threads").catch(() => ({ data: { threads: [] } })),
         api.get("/magazines").catch(() => ({ data: { magazines: [] } })),
-        api.get("/feed/posts").catch(() => ({ data: { posts: [] } })),
       ]);
       setFeed(f.data.posts || []);
       setEvents(e.data.events || []);
       setThreads(t.data.threads || []);
       setMagazines(m.data.magazines || []);
-      setPosts(p.data.posts || []);
     })();
   }, []);
 
@@ -50,48 +52,89 @@ export default function Home() {
     }
   };
 
+  const heroImage = feed[0]?.image || "https://images.unsplash.com/photo-1722803921446-70be3842871e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzB8MHwxfHNlYXJjaHwxfHxhbmltZSUyMGNvbnZlbnRpb24lMjBjcm93ZHxlbnwwfHx8fDE3NzY4MDYyMjh8MA&ixlib=rb-4.1.0&q=85";
+
   return (
     <div className="space-y-6">
       {/* Hero */}
       <section className="relative overflow-hidden rounded-2xl border-2 border-black shadow-[6px_6px_0_#111] bg-[var(--primary)] text-white grain">
-        <img
-          src={feed[0]?.image || "https://images.unsplash.com/photo-1722803921446-70be3842871e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzB8MHwxfHNlYXJjaHwxfHxhbmltZSUyMGNvbnZlbnRpb24lMjBjcm93ZHxlbnwwfHx8fDE3NzY4MDYyMjh8MA&ixlib=rb-4.1.0&q=85"}
-          className="absolute inset-0 w-full h-full object-cover mix-blend-multiply opacity-55"
-          alt=""
-        />
+        <img src={heroImage} className="absolute inset-0 w-full h-full object-cover mix-blend-multiply opacity-55" alt="" />
         <div className="relative p-5">
           <div className="flex items-start gap-3">
             <Logo size={72} ring="bg-white" className="shadow-[4px_4px_0_#111] tilt-2" />
             <div className="flex-1 min-w-0">
-              <Sticker color="secondary" className="tilt-1">★ Hey {user?.name?.split(" ")[0] || "Otaku"}</Sticker>
-              <h1 className="font-black text-4xl leading-[1.05] mt-2">
-                <span className="bg-black px-2">Welcome!</span>
-              </h1>
+              {isMember ? (
+                <>
+                  <Sticker color="secondary" className="tilt-1">★ Hey {user?.name?.split(" ")[0] || "Otaku"}</Sticker>
+                  <h1 className="font-black text-4xl leading-[1.05] mt-2">
+                    <span className="bg-black px-2">Welcome!</span>
+                  </h1>
+                </>
+              ) : (
+                <>
+                  <Sticker color="secondary" className="tilt-1">★ Rintaki Anime Club Society</Sticker>
+                  <h1 className="font-black text-4xl leading-[1.05] mt-2">
+                    <span className="bg-black px-2">Welcome!</span>
+                  </h1>
+                  <p className="mt-2 text-sm font-bold opacity-90 max-w-xs">
+                    Forums, events, trading cards, magazines and galleries — all in one place.
+                  </p>
+                </>
+              )}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 mt-4">
-            <div className="bg-white text-black border-2 border-black rounded-xl p-2 flex items-center gap-2">
-              <Trophy size={16} weight="fill" />
-              <div>
-                <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Points</div>
-                <div className="font-black">{user?.points ?? 0}</div>
+
+          {/* Member: points/cash + daily claim */}
+          {isMember && (
+            <>
+              <div className="grid grid-cols-2 gap-2 mt-4">
+                <div className="bg-white text-black border-2 border-black rounded-xl p-2 flex items-center gap-2">
+                  <Trophy size={16} weight="fill" />
+                  <div>
+                    <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Points</div>
+                    <div className="font-black">{user?.points ?? 0}</div>
+                  </div>
+                </div>
+                <div className="bg-white text-black border-2 border-black rounded-xl p-2 flex items-center gap-2">
+                  <CurrencyCircleDollar size={16} weight="fill" />
+                  <div>
+                    <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Anime Cash</div>
+                    <div className="font-black">{user?.anime_cash ?? 0}</div>
+                  </div>
+                </div>
               </div>
+              <Button variant="secondary" onClick={claimDaily} disabled={claimed} className="mt-3 w-full" data-testid="claim-daily-btn">
+                <Lightning size={14} weight="fill" /> {claimed ? claimMsg || "Claimed" : "Claim daily +5"}
+              </Button>
+            </>
+          )}
+
+          {/* Anonymous OR logged-in non-member: join CTA */}
+          {!isMember && (
+            <div className="mt-4 space-y-2">
+              <Link to="/join" data-testid="hero-join-btn">
+                <Button variant="secondary" className="w-full">
+                  <Sparkle size={14} weight="fill" /> See membership benefits
+                </Button>
+              </Link>
+              {!user && (
+                <Link to="/login" data-testid="hero-signin-link">
+                  <button className="w-full text-white text-xs font-bold uppercase tracking-widest underline decoration-2 underline-offset-4">
+                    Already a member? Sign in
+                  </button>
+                </Link>
+              )}
+              {user && !isMember && (
+                <p className="text-[11px] text-white/80 font-bold text-center">
+                  Logged in as {user.name?.split(" ")[0]}. Members earn points & unlock the dashboard.
+                </p>
+              )}
             </div>
-            <div className="bg-white text-black border-2 border-black rounded-xl p-2 flex items-center gap-2">
-              <CurrencyCircleDollar size={16} weight="fill" />
-              <div>
-                <div className="text-[9px] uppercase tracking-widest font-black text-[var(--muted-fg)]">Anime Cash</div>
-                <div className="font-black">{user?.anime_cash ?? 0}</div>
-              </div>
-            </div>
-          </div>
-          <Button variant="secondary" onClick={claimDaily} disabled={claimed} className="mt-3 w-full" data-testid="claim-daily-btn">
-            <Lightning size={14} weight="fill" /> {claimed ? claimMsg || "Claimed" : "Claim daily +5"}
-          </Button>
+          )}
         </div>
       </section>
 
-      {/* Quick tiles */}
+      {/* Quick tiles — public */}
       <div className="grid grid-cols-4 gap-2">
         <QuickTile to="/events" icon={Calendar} label="Events" />
         <QuickTile to="/magazines" icon={BookOpen} label="Mag" />
@@ -152,7 +195,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* Forum hot */}
+      {/* Forum hot — browsing only for non-members; link still works */}
       <section>
         <SectionHeader title="Forum" icon={Fire} cta={{ to: "/forums", label: "All" }} />
         <div className="space-y-2">
@@ -172,20 +215,6 @@ export default function Home() {
           ))}
         </div>
       </section>
-
-      {/* Media peek */}
-      {posts.length > 0 && (
-        <section>
-          <SectionHeader title="Spotlight" icon={Images} cta={{ to: "/feed", label: "See more" }} />
-          <div className="grid grid-cols-3 gap-1">
-            {posts.slice(0, 6).map((p) => (
-              <Link key={p.post_id} to="/feed" className="aspect-square border-2 border-black rounded-lg overflow-hidden bg-black" data-testid={`home-post-${p.post_id}`}>
-                {p.media_type === "video" ? <video src={p.media_url} className="w-full h-full object-cover" muted /> : <img src={p.media_url} alt="" className="w-full h-full object-cover" />}
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

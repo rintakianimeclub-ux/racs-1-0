@@ -34,6 +34,26 @@ import Dashboard from "@/pages/Dashboard";
 import DashboardProfile from "@/pages/DashboardProfile";
 import { PointsGuide, LibraryGuide } from "@/pages/Guides";
 import { Trips, Giveaways, Contests, SubmitArticle, MembersShop, MembersDiscord } from "@/pages/DashboardSubs";
+import Join from "@/pages/Join";
+
+function Public({ children }) {
+  const { loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-14 h-14 border-2 border-black rounded-full bg-[var(--primary)] animate-pulse" />
+      </div>
+    );
+  }
+  return <Layout>{children}</Layout>;
+}
+
+function MemberOnly({ children }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== "admin" && !user.is_member) return <Navigate to="/join" replace />;
+  return children;
+}
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -65,45 +85,46 @@ function RouterShell() {
       <Route path="/register" element={<Register />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
 
-      <Route path="/" element={<Protected><Home /></Protected>} />
-      <Route path="/forums" element={<Protected><Forums /></Protected>} />
-      <Route path="/forums/:id" element={<Protected><ForumThread /></Protected>} />
-      <Route path="/events" element={<Protected><Events /></Protected>} />
-      <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
+      <Route path="/" element={<Public><Home /></Public>} />
+      <Route path="/forums" element={<Public><Forums /></Public>} />
+      <Route path="/forums/:id" element={<Public><ForumThread /></Public>} />
+      <Route path="/events" element={<Public><Events /></Public>} />
+      <Route path="/events/:id" element={<Public><EventDetail /></Public>} />
       <Route path="/tickets" element={<Protected><MyTickets /></Protected>} />
       <Route path="/tickets/success" element={<Protected><TicketSuccess /></Protected>} />
-      <Route path="/points" element={<Protected><Points /></Protected>} />
-      <Route path="/newsletters" element={<Protected><Newsletters /></Protected>} />
-      <Route path="/videos" element={<Protected><Videos /></Protected>} />
-      <Route path="/messages" element={<Protected><Messages /></Protected>} />
-      <Route path="/messages/:userId" element={<Protected><Messages /></Protected>} />
-      <Route path="/members" element={<Protected><Members /></Protected>} />
+      <Route path="/points" element={<Protected><MemberOnly><Points /></MemberOnly></Protected>} />
+      <Route path="/newsletters" element={<Public><Newsletters /></Public>} />
+      <Route path="/videos" element={<Public><Videos /></Public>} />
+      <Route path="/messages" element={<Protected><MemberOnly><Messages /></MemberOnly></Protected>} />
+      <Route path="/messages/:userId" element={<Protected><MemberOnly><Messages /></MemberOnly></Protected>} />
+      <Route path="/members" element={<Protected><MemberOnly><Members /></MemberOnly></Protected>} />
       <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
       <Route path="/profile" element={<Protected><Profile /></Protected>} />
-      <Route path="/u/:userId" element={<Protected><Profile /></Protected>} />
+      <Route path="/u/:userId" element={<Public><Profile /></Public>} />
 
-      <Route path="/more" element={<Protected><More /></Protected>} />
+      <Route path="/more" element={<Public><More /></Public>} />
       <Route path="/feed" element={<Protected><Feed /></Protected>} />
-      <Route path="/magazines" element={<Protected><Magazines /></Protected>} />
-      <Route path="/library" element={<Protected><Library /></Protected>} />
-      <Route path="/events-gallery" element={<Protected><EventsGallery /></Protected>} />
+      <Route path="/magazines" element={<Public><Magazines /></Public>} />
+      <Route path="/library" element={<Public><Library /></Public>} />
+      <Route path="/events-gallery" element={<Public><EventsGallery /></Public>} />
+      <Route path="/join" element={<Public><Join /></Public>} />
 
-      <Route path="/tcg" element={<Protected><TCGHome /></Protected>} />
-      <Route path="/tcg/collections/:id" element={<Protected><TCGCollection /></Protected>} />
-      <Route path="/tcg/claim" element={<Protected><TCGClaim /></Protected>} />
-      <Route path="/tcg/tradein" element={<Protected><TCGTradeIn /></Protected>} />
-      <Route path="/tcg/trade" element={<Protected><TCGTrade /></Protected>} />
+      <Route path="/tcg" element={<Public><TCGHome /></Public>} />
+      <Route path="/tcg/collections/:id" element={<Public><TCGCollection /></Public>} />
+      <Route path="/tcg/claim" element={<Protected><MemberOnly><TCGClaim /></MemberOnly></Protected>} />
+      <Route path="/tcg/tradein" element={<Protected><MemberOnly><TCGTradeIn /></MemberOnly></Protected>} />
+      <Route path="/tcg/trade" element={<Protected><MemberOnly><TCGTrade /></MemberOnly></Protected>} />
 
-      <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
-      <Route path="/dashboard/profile" element={<Protected><DashboardProfile /></Protected>} />
-      <Route path="/dashboard/points-guide" element={<Protected><PointsGuide /></Protected>} />
-      <Route path="/dashboard/library-guide" element={<Protected><LibraryGuide /></Protected>} />
-      <Route path="/dashboard/trips" element={<Protected><Trips /></Protected>} />
-      <Route path="/dashboard/shop" element={<Protected><MembersShop /></Protected>} />
-      <Route path="/dashboard/discord" element={<Protected><MembersDiscord /></Protected>} />
-      <Route path="/dashboard/giveaways" element={<Protected><Giveaways /></Protected>} />
-      <Route path="/dashboard/contests" element={<Protected><Contests /></Protected>} />
-      <Route path="/dashboard/submit-article" element={<Protected><SubmitArticle /></Protected>} />
+      <Route path="/dashboard" element={<Protected><MemberOnly><Dashboard /></MemberOnly></Protected>} />
+      <Route path="/dashboard/profile" element={<Protected><MemberOnly><DashboardProfile /></MemberOnly></Protected>} />
+      <Route path="/dashboard/points-guide" element={<Protected><MemberOnly><PointsGuide /></MemberOnly></Protected>} />
+      <Route path="/dashboard/library-guide" element={<Protected><MemberOnly><LibraryGuide /></MemberOnly></Protected>} />
+      <Route path="/dashboard/trips" element={<Protected><MemberOnly><Trips /></MemberOnly></Protected>} />
+      <Route path="/dashboard/shop" element={<Protected><MemberOnly><MembersShop /></MemberOnly></Protected>} />
+      <Route path="/dashboard/discord" element={<Protected><MemberOnly><MembersDiscord /></MemberOnly></Protected>} />
+      <Route path="/dashboard/giveaways" element={<Protected><MemberOnly><Giveaways /></MemberOnly></Protected>} />
+      <Route path="/dashboard/contests" element={<Protected><MemberOnly><Contests /></MemberOnly></Protected>} />
+      <Route path="/dashboard/submit-article" element={<Protected><MemberOnly><SubmitArticle /></MemberOnly></Protected>} />
 
       <Route path="/admin" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />
 

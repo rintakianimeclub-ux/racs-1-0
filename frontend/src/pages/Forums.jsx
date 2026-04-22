@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker, Button, Input, Textarea, EmptyState } from "@/components/ui-brutal";
-import { ChatsCircle, Plus, X, Heart } from "@phosphor-icons/react";
+import { ChatsCircle, Plus, X, Heart, Lock } from "@phosphor-icons/react";
 
 const CATEGORIES = ["General", "Anime", "Manga", "Events", "Cosplay", "Trading Cards", "Announcements"];
 
 export default function Forums() {
+  const { user } = useAuth();
+  const isMember = !!user && (user.role === "admin" || user.is_member);
   const [threads, setThreads] = useState([]);
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
@@ -37,11 +40,21 @@ export default function Forums() {
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-black text-4xl">Forums</h1>
-          <p className="text-[var(--muted-fg)]">Threads, debates, meetup plans. +5 pts per thread.</p>
+          <p className="text-[var(--muted-fg)]">
+            {isMember ? "Threads, debates, meetup plans. +5 pts per thread." : "Browse our discussions — members can post & reply."}
+          </p>
         </div>
-        <Button onClick={() => setOpen(true)} data-testid="new-thread-btn">
-          <Plus size={16} weight="bold" /> New thread
-        </Button>
+        {isMember ? (
+          <Button onClick={() => setOpen(true)} data-testid="new-thread-btn">
+            <Plus size={16} weight="bold" /> New thread
+          </Button>
+        ) : (
+          <Link to="/join" data-testid="forum-join-btn">
+            <Button variant="dark">
+              <Lock size={14} weight="bold" /> Join to post
+            </Button>
+          </Link>
+        )}
       </div>
 
       <div className="flex gap-2 flex-wrap">

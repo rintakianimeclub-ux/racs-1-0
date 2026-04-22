@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Rintaki App Sync
- * Description: Exposes MyCred points & Anime Cash to the Rintaki mobile app, and accepts adjustments. Secured with a shared secret.
- * Version:     1.0.0
+ * Description: Exposes MyCred points, Anime Cash, and PMPro membership level to the Rintaki mobile app, and accepts adjustments. Secured with a shared secret.
+ * Version:     1.1.0
  * Author:      Rintaki Anime Club Society
  */
 
@@ -26,12 +26,26 @@ function rintaki_app_check_key(WP_REST_Request $req) {
     return hash_equals(RINTAKI_APP_SECRET, $provided);
 }
 
-/** Helper: get a balance, gracefully returning 0 if MyCred isn't active. */
+/** Helper: get a MyCred balance, gracefully returning 0 if MyCred isn't active. */
 function rintaki_app_balance($user_id, $type) {
     if (function_exists('mycred_get_users_balance')) {
         return (float) mycred_get_users_balance($user_id, $type);
     }
     return 0.0;
+}
+
+/** Helper: return user's active PMPro membership level or {level:0} if none. */
+function rintaki_app_membership($user_id) {
+    if (function_exists('pmpro_getMembershipLevelForUser')) {
+        $lvl = pmpro_getMembershipLevelForUser($user_id);
+        if ($lvl && !empty($lvl->ID)) {
+            return [
+                'level' => (int) $lvl->ID,
+                'name'  => isset($lvl->name) ? (string) $lvl->name : '',
+            ];
+        }
+    }
+    return ['level' => 0, 'name' => ''];
 }
 
 add_action('rest_api_init', function () {
@@ -49,13 +63,16 @@ add_action('rest_api_init', function () {
             if (!$user) {
                 return new WP_REST_Response(['found' => false], 200);
             }
+            $membership = rintaki_app_membership($user->ID);
             return new WP_REST_Response([
-                'found'        => true,
-                'user_id'      => (int) $user->ID,
-                'email'        => $user->user_email,
-                'display_name' => $user->display_name,
-                'points'       => (int) rintaki_app_balance($user->ID, RINTAKI_POINTS_TYPE),
-                'anime_cash'   => (int) rintaki_app_balance($user->ID, RINTAKI_CASH_TYPE),
+                'found'            => true,
+                'user_id'          => (int) $user->ID,
+                'email'            => $user->user_email,
+                'display_name'     => $user->display_name,
+                'points'           => (int) rintaki_app_balance($user->ID, RINTAKI_POINTS_TYPE),
+                'anime_cash'       => (int) rintaki_app_balance($user->ID, RINTAKI_CASH_TYPE),
+                'membership_level' => (int) $membership['level'],
+                'membership_name'  => (string) $membership['name'],
             ], 200);
         },
     ]);
@@ -94,8 +111,9 @@ add_action('rest_api_init', function () {
         'permission_callback' => 'rintaki_app_check_key',
         'callback'            => function () {
             return [
-                'ok' => true,
+                'ok'            => true,
                 'mycred_active' => function_exists('mycred_get_users_balance'),
+                'pmpro_active'  => function_exists('pmpro_getMembershipLevelForUser'),
                 'points_type'   => RINTAKI_POINTS_TYPE,
                 'cash_type'     => RINTAKI_CASH_TYPE,
             ];
