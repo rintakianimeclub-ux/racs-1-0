@@ -22,17 +22,23 @@ export default function ForumThread() {
 
   const load = async () => {
     setLoading(true); setNotFound(false);
+    // Try forum first — if it has topics, use it. Otherwise fall through to topic.
+    let forumData = null;
     try {
       const { data } = await api.get(`/forums/asgaros/forum/${id}`);
-      setForum(data); setTopic(null);
-      setLoading(false);
-      return;
+      if (data?.topics?.length > 0) {
+        setForum(data); setTopic(null);
+        setLoading(false);
+        return;
+      }
+      forumData = data;
     } catch { /* try topic */ }
     try {
       const { data } = await api.get(`/forums/asgaros/topic/${id}`, { params: { refresh: replySuccess ? 1 : 0 } });
       setTopic(data); setForum(null);
     } catch {
-      setNotFound(true);
+      if (forumData) { setForum(forumData); setTopic(null); }
+      else { setNotFound(true); }
     }
     setLoading(false);
   };

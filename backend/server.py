@@ -719,8 +719,11 @@ async def asgaros_post_reply(slug: str, data: AsgarosReplyIn, user: dict = Depen
             detail = r.json().get("message", "") or r.text
         except Exception:
             detail = r.text
-        if "rest_no_route" in detail or "Endpoint not found" in detail:
-            raise HTTPException(502, "The rintaki.org sync plugin needs to be updated to v1.3.0 to accept replies. (See /app/wp-plugin/rintaki-app-sync.php)")
+        low = detail.lower()
+        if ("rest_no_route" in low
+            or "endpoint not found" in low
+            or "no route was found" in low):
+            raise HTTPException(502, "The rintaki.org sync plugin needs to be updated to v1.3.0 to accept replies. Please upload the latest /app/wp-plugin/rintaki-app-sync.php to WordPress.")
         raise HTTPException(404, detail or "Topic or user not found on rintaki.org.")
     if r.status_code != 200:
         try:

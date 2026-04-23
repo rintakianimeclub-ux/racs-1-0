@@ -134,3 +134,12 @@ See `/app/memory/test_credentials.md`.
   - Admin: "Sync from rintaki.org" (with live progress bar + "Now: {gallery}" status), "Add by ID" (event/year/name + imagely_id OR URL), per-card refresh + delete.
 - Old `gallery_links` endpoints and collection removed.
 
+
+### 2026-04-23 — Asgaros Forum native reply (verified)
+- **Members can now reply to Asgaros topics directly from the app** (earns +2 pts).
+- Backend: `POST /api/forums/asgaros/reply` (gated by `require_member`) proxies to the WP plugin `/wp-json/rintaki/v1/forum-reply` endpoint.
+- WP plugin `rintaki-app-sync.php` **v1.3.0**: new `/forum-reply` endpoint resolves a topic slug → topic id via `sanitize_title(name)` match, inserts into `{prefix}forum_posts` with `parent_id=topic_id`, fires `asgarosforum_after_add_post` so notifications/indexes update.
+- Frontend: `ForumThread.jsx` now shows a native reply form for members (Join CTA for non-members, Sign-in CTA for anonymous). Successful reply auto-refreshes the thread from source and shows a toast.
+- Fix: ForumThread load logic now prefers the topic endpoint when a forum slug returns 0 topics (Asgaros reuses slugs between empty forums and topics).
+- Fix: Improved "plugin needs upgrade" detection — now catches WP's `"No route was found"` 404 message and returns a clear 502 with upgrade instructions instead of a cryptic 404.
+- **ACTION REQUIRED (USER)**: Upload `/app/wp-plugin/rintaki-app-sync.php` v1.3.0 to `rintaki.org` → *Plugins → Rintaki App Sync → Edit* (or re-zip and reinstall). Reply will 502 with an upgrade notice until this is done.
