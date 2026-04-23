@@ -15,7 +15,8 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, Header
+from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, Header, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
@@ -1605,6 +1606,97 @@ async def get_links():
         },
     }
 
+# ----------------- Live Guides (scraped from rintaki.org) -----------------
+_guides_cache: dict = {}  # key -> (ts, html)
+GUIDES_TTL = 3600  # 1 hour
+
+async def _scrape_guide_html(url: str) -> dict:
+    """Fetch a rintaki.org page and return sanitized article HTML + plain title.
+
+    Strips scripts, styles, iframes, forms, nav/header/footer/sidebar.
+    Keeps paragraphs, headings, lists, tables, blockquotes, figures, links, images.
+    """
+    from bs4 import BeautifulSoup
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0 RintakiApp/1.0"}) as hc:
+        r = await hc.get(url)
+        if r.status_code != 200:
+            raise HTTPException(502, f"Could not fetch page (HTTP {r.status_code})")
+        soup = BeautifulSoup(r.text, "lxml")
+    # Title: prefer H1 on the page, else <title>
+    title_el = soup.find("h1") or soup.find("title")
+    title = title_el.get_text(" ", strip=True) if title_el else ""
+    # Find the main content container — Elementor pages store content inside .elementor
+    root = (
+        soup.select_one(".elementor-section-wrap")
+        or soup.select_one('[data-elementor-type="wp-page"]')
+        or soup.select_one(".entry-content")
+        or soup.find("main")
+        or soup.find("article")
+        or soup.body
+    )
+    if not root:
+        return {"title": title, "html": "", "url": url}
+    # Strip unwanted elements
+    for sel in [
+        "script", "style", "noscript", "iframe", "form",
+        "nav", "header", "footer", ".rstb-page-title",
+        ".elementor-widget-wp-widget-nav_menu",
+        ".moderncart-plugin", "#site-preloader", "#moderncart-floating-cart",
+        "#moderncart-slide-out-modal", "#live-region",
+        ".widget_shopping_cart_live_region", ".screen-reader-text",
+        ".a11y-speak-region", "#fpg-reading-progress",
+        # Per-user points widgets (require WP login context — useless in app)
+        ".mycred-my-balance", ".mycred-badges-list", ".mycred-log",
+        ".mycred-ranking-list",
+    ]:
+        for el in root.select(sel):
+            el.decompose()
+    # Strip dangerous attributes
+    for el in root.find_all(True):
+        for attr in list(el.attrs.keys()):
+            if attr.startswith("on") or attr in ("style", "class", "id",
+                                                 "data-elementor-type", "data-elementor-id",
+                                                 "data-element_type", "data-e-type",
+                                                 "data-id", "data-widget_type",
+                                                 "data-settings", "data-e-action-hash"):
+                del el.attrs[attr]
+    # Absolutize relative URLs
+    import re as _re
+    for tag, attr in (("a", "href"), ("img", "src")):
+        for el in root.find_all(tag):
+            v = el.get(attr) or ""
+            if v.startswith("/"):
+                el[attr] = "https://rintaki.org" + v
+    html = str(root)
+    # Collapse big whitespace blocks
+    html = _re.sub(r"\n\s*\n+", "\n", html)
+    return {"title": title, "html": html, "url": url}
+
+async def _guide_cached(key: str, url: str, refresh: bool = False):
+    now_ts = _time.time()
+    if not refresh and key in _guides_cache:
+        ts, data = _guides_cache[key]
+        if now_ts - ts < GUIDES_TTL:
+            return {**data, "cached": True}
+    try:
+        data = await _scrape_guide_html(url)
+    except HTTPException:
+        # Fall back to stale cache if available
+        if key in _guides_cache:
+            return {**_guides_cache[key][1], "cached": True, "stale": True}
+        raise
+    _guides_cache[key] = (now_ts, data)
+    return {**data, "cached": False}
+
+@api.get("/guides/points")
+async def guide_points(refresh: bool = False):
+    return await _guide_cached("points", "https://rintaki.org/points/", refresh=refresh)
+
+@api.get("/guides/anime-cash")
+async def guide_anime_cash(refresh: bool = False):
+    return await _guide_cached("anime-cash", "https://rintaki.org/member-dashboard/anime-cash/", refresh=refresh)
+
 # ----------------- WooCommerce Shop (proxy to WC Store API) -----------------
 WC_BASE = os.environ.get("RINTAKI_WC_BASE", "https://rintaki.org")
 _wc_cache: dict = {}  # key -> (ts, data)
@@ -1812,6 +1904,77 @@ async def my_pending_posts(user: dict = Depends(require_member)):
 async def admin_pending_posts(user: dict = Depends(require_admin)):
     posts = await db.media_posts.find({"status": "pending"}, {"_id": 0}).sort("created_at", 1).to_list(200)
     return {"posts": posts}
+
+# ---- Spotlight native uploads (phone camera / gallery) ----
+UPLOADS_DIR = Path("/app/backend/uploads/spotlight")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Per-file size ceiling (accepts short phone videos + high-res photos)
+MAX_IMAGE_BYTES = 12 * 1024 * 1024     # 12 MB
+MAX_VIDEO_BYTES = 60 * 1024 * 1024     # 60 MB (15s iPhone 4K HEVC ≈ 25 MB)
+ALLOWED_IMAGE_EXT = {"jpg", "jpeg", "png", "webp", "heic", "heif", "gif"}
+ALLOWED_VIDEO_EXT = {"mp4", "mov", "m4v", "webm", "3gp"}
+
+def _public_upload_url(request: Request, filename: str) -> str:
+    """Build the public URL for an uploaded file.
+
+    The backend is reached through the ingress which rewrites /api/* to port 8001.
+    Front-end reads REACT_APP_BACKEND_URL which already points to that public host,
+    so we just return a relative /api/uploads/... path and let the frontend join it.
+    """
+    return f"/api/uploads/spotlight/{filename}"
+
+@api.post("/feed/upload")
+async def upload_spotlight_media(
+    request: Request,
+    file: UploadFile = File(...),
+    media_type: str = Form(...),
+    user: dict = Depends(require_member),
+):
+    """Accept a native photo/video upload from the user's phone and return a URL.
+
+    The frontend then POSTs /feed/posts with media_url = returned URL.
+    """
+    if media_type not in ("image", "video"):
+        raise HTTPException(400, "media_type must be image or video")
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    allowed = ALLOWED_IMAGE_EXT if media_type == "image" else ALLOWED_VIDEO_EXT
+    if ext not in allowed:
+        raise HTTPException(400, f"Unsupported {media_type} format .{ext}. Allowed: {', '.join(sorted(allowed))}.")
+    limit = MAX_IMAGE_BYTES if media_type == "image" else MAX_VIDEO_BYTES
+    # Stream to disk, enforce limit
+    file_id = f"{user['user_id']}_{uuid.uuid4().hex[:10]}.{ext}"
+    dest = UPLOADS_DIR / file_id
+    total = 0
+    try:
+        with open(dest, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB chunks
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    out.close()
+                    dest.unlink(missing_ok=True)
+                    human = f"{limit // (1024 * 1024)} MB"
+                    raise HTTPException(413, f"File too large. Max {human} for {media_type}s.")
+                out.write(chunk)
+    finally:
+        await file.close()
+    # Basic content-type sanity
+    ctype = (file.content_type or "").lower()
+    if media_type == "image" and ctype and not ctype.startswith("image/"):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "File content-type is not an image.")
+    if media_type == "video" and ctype and not ctype.startswith("video/"):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "File content-type is not a video.")
+    return {
+        "url": _public_upload_url(request, file_id),
+        "filename": file_id,
+        "size": total,
+        "media_type": media_type,
+    }
 
 @api.post("/feed/posts")
 async def create_post(data: MediaPostCreate, user: dict = Depends(require_member)):
@@ -2029,9 +2192,91 @@ def _parse_card_filename(name: str) -> dict:
     display = " ".join(name_parts).title() if name_parts else base
     return {"number": number, "name": display, "rarity": rarity}
 
+
+def _parse_card_caption(caption: str) -> Optional[dict]:
+    """Parse a gallery figcaption like 'Set 1 – #1 – Common' or 'Set 2 - #10 - Super Rare'.
+
+    Returns {'set_no', 'card_no', 'rarity', 'number', 'name'} or None if the caption
+    doesn't match the Set/#/Rarity pattern.
+      - number: combined 'S1-01' to keep cards sortable across sets
+      - name:   the original caption, shown verbatim
+    """
+    if not caption:
+        return None
+    import re
+    # Split on any of: em-dash, en-dash, hyphen, pipe
+    parts = [p.strip() for p in re.split(r"\s*[–—\-|]\s*", caption) if p.strip()]
+    if len(parts) < 2:
+        return None
+    set_no = ""
+    card_no = ""
+    rarity = ""
+    for p in parts:
+        m = re.match(r"set\s*(\d+)", p, re.I)
+        if m:
+            set_no = m.group(1)
+            continue
+        m = re.match(r"#\s*(\d+)", p)
+        if m:
+            card_no = m.group(1)
+            continue
+        # Anything left that isn't a set/# token is the rarity label
+        if p and not rarity:
+            rarity = p.strip()
+    if not (set_no or card_no):
+        return None
+    # Sortable numeric: set*1000 + card number (so Set 1 #1..30 < Set 2 #1..30)
+    try:
+        sortable = f"S{int(set_no) if set_no else 0}-{int(card_no):03d}" if card_no else f"S{set_no or 0}"
+    except ValueError:
+        sortable = f"S{set_no or 0}-{card_no or '000'}"
+    return {
+        "set_no": set_no,
+        "card_no": card_no,
+        "rarity": rarity.title() if rarity else "Common",
+        "number": sortable,
+        "name": caption.strip(),
+    }
+
+
+def _card_meta(img: dict, fallback_index: int, existing_count: int = 0) -> dict:
+    """Build a normalized card metadata dict from a scraped image.
+
+    Priority: figcaption → Elementor lightbox title → alt text → filename parse.
+    Always returns keys: name, number, rarity.
+    """
+    caption = (img.get("caption") or "").strip()
+    parsed = _parse_card_caption(caption)
+    if parsed:
+        return {"name": parsed["name"], "number": parsed["number"], "rarity": parsed["rarity"]}
+    alt = (img.get("alt") or "").strip()
+    if alt:
+        parsed_alt = _parse_card_caption(alt)
+        if parsed_alt:
+            return {"name": parsed_alt["name"], "number": parsed_alt["number"], "rarity": parsed_alt["rarity"]}
+    lb = (img.get("lightbox_title") or "").strip()
+    fm = _parse_card_filename(img.get("filename") or "")
+    # Display name priority: alt → lightbox_title → filename display → "Card NNN"
+    display_name = alt or lb or fm["name"] or f"Card {existing_count + fallback_index:03d}"
+    return {
+        "name": display_name,
+        "number": fm["number"] or f"{existing_count + fallback_index:03d}",
+        "rarity": fm["rarity"],
+    }
+
 async def _scrape_page_images(url: str) -> list:
-    """Return list of image URLs found on a WP page (unique, in order)."""
+    """Return list of image URLs found on a WP page (unique, in order).
+
+    For each image, collects:
+      - url:      full-size image URL (strips WP -WxH resize suffix)
+      - filename: last path segment of url
+      - alt:      <img alt> attribute
+      - caption:  sibling/parent <figcaption> text if present (e.g. 'Set 1 – #1 – Common')
+      - lightbox_title: Elementor lightbox data-elementor-lightbox-title if present
+    """
     from bs4 import BeautifulSoup
+    import re
+
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as hc:
         r = await hc.get(url, headers={"User-Agent": "Mozilla/5.0 RintakiApp/1.0"})
         if r.status_code != 200:
@@ -2042,13 +2287,23 @@ async def _scrape_page_images(url: str) -> list:
     seen = set()
     imgs = []
     # Look for images inside .wp-block-gallery first, fall back to all content images
-    scopes = soup.select(".wp-block-gallery, .entry-content, main, article") or [soup]
+    scopes = soup.select(
+        ".elementor-image-gallery, .wp-block-gallery, .gallery, .entry-content, main, article"
+    ) or [soup]
     for scope in scopes:
         for img in scope.find_all("img"):
-            # prefer full-size: data-full-url, then data-src, then src
-            src = img.get("data-full-url") or img.get("data-src") or img.get("src") or ""
+            # prefer full-size: anchor href (lightbox target), data-full-url, data-src, then src
+            anchor = img.find_parent("a")
+            href = (anchor.get("href") if anchor else "") or ""
+            src = (
+                (href if re.search(r"\.(png|jpe?g|webp|gif)$", href, re.I) else "")
+                or img.get("data-full-url")
+                or img.get("data-src")
+                or img.get("src")
+                or ""
+            )
             srcset = img.get("srcset") or ""
-            if srcset:
+            if not src and srcset:
                 # Pick the largest from srcset
                 try:
                     largest = max(
@@ -2065,12 +2320,26 @@ async def _scrape_page_images(url: str) -> list:
             if any(x in src for x in ("avatar", "gravatar", "emoji", "logo", "icon", "loading")):
                 continue
             # strip WP resize suffix to get the original file URL
-            import re
             src_canon = re.sub(r"-\d{2,4}x\d{2,4}(?=\.[a-zA-Z]{3,4}$)", "", src)
             if src_canon in seen:
                 continue
             seen.add(src_canon)
-            imgs.append({"url": src_canon, "filename": src_canon.rsplit("/", 1)[-1], "alt": img.get("alt", "")})
+            # Figcaption sits on the containing <figure> in WP galleries
+            figure = img.find_parent("figure")
+            cap_text = ""
+            if figure:
+                cap_el = figure.find("figcaption")
+                if cap_el:
+                    cap_text = cap_el.get_text(" ", strip=True)
+            # Elementor lightbox title, e.g. data-elementor-lightbox-title="FC260101"
+            lb_title = (anchor.get("data-elementor-lightbox-title") if anchor else "") or ""
+            imgs.append({
+                "url": src_canon,
+                "filename": src_canon.rsplit("/", 1)[-1],
+                "alt": img.get("alt", "") or "",
+                "caption": cap_text,
+                "lightbox_title": lb_title,
+            })
     return imgs
 
 @api.post("/tcg/collections/sync")
@@ -2089,13 +2358,12 @@ async def sync_collection_from_url(data: TCGCollectionSync, user: dict = Depends
     })
     added = 0
     for i, img in enumerate(imgs, 1):
-        meta = _parse_card_filename(img["filename"])
-        display_name = img.get("alt") or meta["name"] or f"Card {i:03d}"
+        meta = _card_meta(img, fallback_index=i)
         await db.tcg_cards.insert_one({
             "card_id": f"card_{uuid.uuid4().hex[:10]}",
             "collection_id": col_id,
-            "name": display_name,
-            "number": meta["number"] or f"{i:03d}",
+            "name": meta["name"],
+            "number": meta["number"],
             "rarity": meta["rarity"],
             "image_url": img["url"],
             "created_at": iso(now_utc()),
@@ -2111,26 +2379,39 @@ async def resync_collection(collection_id: str, user: dict = Depends(require_adm
     if not col.get("source_url"):
         raise HTTPException(400, "This collection has no source_url; create it via /tcg/collections/sync first.")
     imgs = await _scrape_page_images(col["source_url"])
-    existing = await db.tcg_cards.find({"collection_id": collection_id}, {"_id": 0, "image_url": 1}).to_list(5000)
-    existing_urls = {c["image_url"] for c in existing}
-    count_existing = await db.tcg_cards.count_documents({"collection_id": collection_id})
+    existing = await db.tcg_cards.find({"collection_id": collection_id}, {"_id": 0, "image_url": 1, "card_id": 1}).to_list(5000)
+    existing_by_url = {c["image_url"]: c["card_id"] for c in existing}
+    count_existing = len(existing)
     added = 0
+    relabeled = 0
     for i, img in enumerate(imgs, 1):
-        if img["url"] in existing_urls:
+        meta = _card_meta(img, fallback_index=added + 1, existing_count=count_existing)
+        card_id = existing_by_url.get(img["url"])
+        if card_id:
+            # Update name/number/rarity in-place so existing collections pick up captions
+            res = await db.tcg_cards.update_one(
+                {"card_id": card_id},
+                {"$set": {"name": meta["name"], "number": meta["number"], "rarity": meta["rarity"]}},
+            )
+            if res.modified_count:
+                relabeled += 1
             continue
-        meta = _parse_card_filename(img["filename"])
-        display_name = img.get("alt") or meta["name"] or f"Card {count_existing + added + 1:03d}"
         await db.tcg_cards.insert_one({
             "card_id": f"card_{uuid.uuid4().hex[:10]}",
             "collection_id": collection_id,
-            "name": display_name,
-            "number": meta["number"] or f"{count_existing + added + 1:03d}",
+            "name": meta["name"],
+            "number": meta["number"],
             "rarity": meta["rarity"],
             "image_url": img["url"],
             "created_at": iso(now_utc()),
         })
         added += 1
-    return {"added": added, "total_found": len(imgs), "already_present": len(imgs) - added}
+    return {
+        "added": added,
+        "relabeled": relabeled,
+        "total_found": len(imgs),
+        "already_present": len(imgs) - added,
+    }
 
 @api.get("/tcg/collections/{collection_id}/cards")
 async def tcg_cards(collection_id: str, user: dict = Depends(get_current_user)):
@@ -2620,6 +2901,10 @@ async def my_tickets(user: dict = Depends(get_current_user)):
 
 # ----------------- Wire up -----------------
 app.include_router(api)
+
+# Serve Spotlight uploads (images & videos) behind /api/uploads so the
+# k8s ingress routes them to backend:8001 like any other /api/* path.
+app.mount("/api/uploads/spotlight", StaticFiles(directory=str(UPLOADS_DIR)), name="spotlight-uploads")
 
 _frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(

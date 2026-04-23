@@ -2,9 +2,19 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker, Button, Input, Textarea, Avatar, EmptyState } from "@/components/ui-brutal";
-import { Heart, ChatCircle, Plus, X, Image as ImageIcon, VideoCamera, PaperPlaneTilt, Clock } from "@phosphor-icons/react";
+import { Heart, ChatCircle, Plus, X, Image as ImageIcon, VideoCamera, PaperPlaneTilt, Clock, Camera, UploadSimple } from "@phosphor-icons/react";
 
 const VIDEO_MAX_SECONDS = 15;
+const BACKEND = process.env.REACT_APP_BACKEND_URL || "";
+
+// Resolve a media_url: the backend returns relative /api/uploads/... paths;
+// join them with REACT_APP_BACKEND_URL so <img>/<video> can load them.
+function resolveMediaUrl(u) {
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("data:")) return u;
+  if (u.startsWith("/api/")) return `${BACKEND}${u}`;
+  return u;
+}
 
 export default function Feed() {
   const { user } = useAuth();
@@ -14,11 +24,16 @@ export default function Feed() {
   const [commentFor, setCommentFor] = useState(null);
   const [comments, setComments] = useState([]);
   const [commentBody, setCommentBody] = useState("");
+  // form.media_url is the final (uploaded or pasted) URL; preview_url drives the <img>/<video>
   const [form, setForm] = useState({ media_type: "image", media_url: "", caption: "", video_duration: null });
+  const [preview, setPreview] = useState(""); // local blob: URL for the chosen file, cleared on submit
+  const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [posting, setPosting] = useState(false);
   const [postErr, setPostErr] = useState("");
   const [submitMsg, setSubmitMsg] = useState("");
   const durationTimer = useRef(null);
+  const fileInputRef = useRef(null);
 
   const load = async () => {
     const { data } = await api.get("/feed/posts");
@@ -32,11 +47,10 @@ export default function Feed() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user?.user_id]);
 
-  // Probe video duration when URL is pasted for a video post (client-side validation)
+  // Probe video duration when a video preview is available (client-side validation)
   useEffect(() => {
-    if (form.media_type !== "video" || !form.media_url) {
-      setForm((f) => ({ ...f, video_duration: null }));
-      setPostErr("");
+    if (form.media_type !== "video" || !preview) {
+      setForm((f) => (f.video_duration != null ? { ...f, video_duration: null } : f));
       return;
     }
     clearTimeout(durationTimer.current);
@@ -44,7 +58,7 @@ export default function Feed() {
       const v = document.createElement("video");
       v.preload = "metadata";
       v.muted = true;
-      v.src = form.media_url;
+      v.src = preview;
       v.onloadedmetadata = () => {
         const dur = Number(v.duration);
         setForm((f) => ({ ...f, video_duration: dur }));
@@ -54,14 +68,64 @@ export default function Feed() {
           setPostErr("");
         }
       };
-      v.onerror = () => setPostErr("Couldn't load video — check the URL.");
-    }, 400);
+      v.onerror = () => setPostErr("Couldn't read this video — try a different format.");
+    }, 200);
     return () => clearTimeout(durationTimer.current);
-  }, [form.media_url, form.media_type]);
+  }, [preview, form.media_type]);
+
+  const clearFile = () => {
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview("");
+    setForm((f) => ({ ...f, media_url: "", video_duration: null }));
+    setPostErr("");
+    setUploadPct(0);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const onFilePicked = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setPostErr(""); setSubmitMsg("");
+    // Detect media_type from MIME
+    const isVideo = f.type.startsWith("video/");
+    const isImage = f.type.startsWith("image/");
+    if (!isVideo && !isImage) {
+      setPostErr("Please choose a photo or video.");
+      return;
+    }
+    const mt = isVideo ? "video" : "image";
+    if (preview) URL.revokeObjectURL(preview);
+    const blobUrl = URL.createObjectURL(f);
+    setPreview(blobUrl);
+    setForm((fm) => ({ ...fm, media_type: mt, media_url: "", video_duration: null }));
+    // Upload immediately so submit is instant & duration has already been validated
+    setUploading(true); setUploadPct(0);
+    try {
+      const body = new FormData();
+      body.append("file", f);
+      body.append("media_type", mt);
+      const { data } = await api.post("/feed/upload", body, {
+        headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress: (ev) => {
+          if (ev.total) setUploadPct(Math.round((ev.loaded / ev.total) * 100));
+        },
+      });
+      setForm((fm) => ({ ...fm, media_url: data.url }));
+    } catch (err) {
+      setPostErr(err.response?.data?.detail || "Upload failed");
+      clearFile();
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setPostErr(""); setSubmitMsg("");
+    if (!form.media_url) {
+      setPostErr("Choose a photo or video first.");
+      return;
+    }
     if (form.media_type === "video" && form.video_duration && form.video_duration > VIDEO_MAX_SECONDS + 0.5) {
       setPostErr(`Video too long — must be ${VIDEO_MAX_SECONDS}s or shorter.`);
       return;
@@ -71,6 +135,7 @@ export default function Feed() {
       const { data } = await api.post("/feed/posts", form);
       setSubmitMsg(data.message || "Submitted for admin review.");
       setOpen(false);
+      clearFile();
       setForm({ media_type: "image", media_url: "", caption: "", video_duration: null });
       load();
       setTimeout(() => setSubmitMsg(""), 4000);
@@ -132,9 +197,9 @@ export default function Feed() {
             {pending.map((p) => (
               <div key={p.post_id} className="flex-shrink-0 w-16 h-16 border-2 border-black rounded-lg overflow-hidden bg-black relative">
                 {p.media_type === "video" ? (
-                  <video src={p.media_url} className="w-full h-full object-cover" muted />
+                  <video src={resolveMediaUrl(p.media_url)} className="w-full h-full object-cover" muted />
                 ) : (
-                  <img src={p.media_url} alt="" className="w-full h-full object-cover" />
+                  <img src={resolveMediaUrl(p.media_url)} alt="" className="w-full h-full object-cover" />
                 )}
                 {p.media_type === "video" && <VideoCamera size={14} weight="fill" className="absolute bottom-1 right-1 text-white" />}
               </div>
@@ -160,9 +225,9 @@ export default function Feed() {
                 </div>
                 <div className="bg-black aspect-square">
                   {p.media_type === "video" ? (
-                    <video src={p.media_url} controls className="w-full h-full object-contain" />
+                    <video src={resolveMediaUrl(p.media_url)} controls playsInline className="w-full h-full object-contain" />
                   ) : (
-                    <img src={p.media_url} alt="" className="w-full h-full object-cover" />
+                    <img src={resolveMediaUrl(p.media_url)} alt="" className="w-full h-full object-cover" />
                   )}
                 </div>
                 <div className="p-3">
@@ -192,23 +257,60 @@ export default function Feed() {
                 className="bg-white border-2 border-black rounded-2xl w-full max-w-md p-5 shadow-[6px_6px_0_#111]" data-testid="new-post-form">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-black text-xl">New post</h2>
-              <button type="button" onClick={() => setOpen(false)} className="w-8 h-8 border-2 border-black rounded-full flex items-center justify-center"><X size={14} weight="bold" /></button>
+              <button type="button" onClick={() => { clearFile(); setOpen(false); }} className="w-8 h-8 border-2 border-black rounded-full flex items-center justify-center"><X size={14} weight="bold" /></button>
             </div>
+
             <div className="space-y-3">
-              <div className="flex gap-2">
-                {[
-                  { v: "image", icon: ImageIcon, l: "Image" },
-                  { v: "video", icon: VideoCamera, l: "Video" },
-                ].map((opt) => (
-                  <button type="button" key={opt.v} onClick={() => setForm({ ...form, media_type: opt.v })}
-                          data-testid={`media-type-${opt.v}`}
-                          className={`flex-1 border-2 border-black rounded-full py-2 font-bold text-sm flex items-center justify-center gap-1 ${form.media_type === opt.v ? "bg-[var(--primary)] text-white" : "bg-white"}`}>
-                    <opt.icon size={14} weight="bold" /> {opt.l}
+              {/* Hidden native file inputs: one for camera, one for library */}
+              <input ref={fileInputRef} type="file" accept="image/*,video/*"
+                     onChange={onFilePicked} className="hidden" data-testid="file-input" />
+              <input type="file" accept="image/*,video/*" capture="environment"
+                     onChange={onFilePicked} className="hidden" id="feed-camera-input" data-testid="camera-input" />
+
+              {/* Preview OR pick buttons */}
+              {preview ? (
+                <div className="relative border-2 border-black rounded-lg overflow-hidden bg-black aspect-square" data-testid="preview">
+                  {form.media_type === "video" ? (
+                    <video src={preview} controls playsInline className="w-full h-full object-contain" />
+                  ) : (
+                    <img src={preview} alt="preview" className="w-full h-full object-cover" />
+                  )}
+                  {uploading && (
+                    <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-black uppercase tracking-widest px-2 py-1" data-testid="upload-progress">
+                      Uploading… {uploadPct}%
+                      <div className="h-1 bg-white/20 mt-1">
+                        <div className="h-full bg-[var(--primary)]" style={{ width: `${uploadPct}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  {!uploading && form.media_url && (
+                    <div className="absolute top-1 left-1 bg-[var(--secondary)] border-2 border-black rounded-full px-2 py-0.5 text-[10px] font-black uppercase" data-testid="preview-ready">Ready</div>
+                  )}
+                  <button type="button" onClick={clearFile} data-testid="preview-clear"
+                          className="absolute top-1 right-1 w-7 h-7 bg-white border-2 border-black rounded-full flex items-center justify-center shadow-[2px_2px_0_#111]">
+                    <X size={12} weight="bold" />
                   </button>
-                ))}
-              </div>
-              <Input required placeholder={`${form.media_type === "image" ? "Image" : "Video"} URL`} value={form.media_url}
-                     data-testid="post-url" onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label htmlFor="feed-camera-input" data-testid="pick-camera"
+                           className="cursor-pointer border-2 border-black rounded-xl p-4 bg-[var(--primary)] text-white flex flex-col items-center justify-center text-center shadow-[3px_3px_0_#111] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none">
+                      <Camera size={24} weight="fill" />
+                      <span className="font-black text-sm mt-1">Take photo/video</span>
+                    </label>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} data-testid="pick-library"
+                           className="border-2 border-black rounded-xl p-4 bg-white flex flex-col items-center justify-center text-center shadow-[3px_3px_0_#111] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none">
+                      <UploadSimple size={24} weight="bold" />
+                      <span className="font-black text-sm mt-1">Choose from phone</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-center text-[var(--muted-fg)] font-bold uppercase tracking-widest">
+                    Photos up to 12MB · Videos up to 60MB (≤{VIDEO_MAX_SECONDS}s)
+                  </p>
+                </>
+              )}
+
               {form.media_type === "video" && form.video_duration != null && (
                 <div className={`text-xs font-bold ${postErr ? "text-[var(--primary)]" : "text-[var(--muted-fg)]"}`} data-testid="video-duration-label">
                   Duration: {form.video_duration.toFixed(1)}s / {VIDEO_MAX_SECONDS}s max
@@ -222,7 +324,7 @@ export default function Feed() {
               <Textarea rows={3} placeholder="Caption (optional)" value={form.caption}
                         data-testid="post-caption" onChange={(e) => setForm({ ...form, caption: e.target.value })} />
             </div>
-            <Button type="submit" disabled={posting || !!postErr} className="w-full mt-4" data-testid="post-submit">
+            <Button type="submit" disabled={posting || uploading || !!postErr || !form.media_url} className="w-full mt-4" data-testid="post-submit">
               {posting ? "Posting..." : `Submit for review (${rewardHint})`}
             </Button>
             <p className="text-[10px] text-center text-[var(--muted-fg)] font-bold uppercase tracking-widest mt-2">

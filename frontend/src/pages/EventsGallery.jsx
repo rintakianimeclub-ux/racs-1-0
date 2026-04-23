@@ -13,6 +13,9 @@ export default function EventsGallery() {
   const [galleries, setGalleries] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Drill-down state: null → events grid; {event} → years list; {event, year} → galleries grid
+  const [nav, setNav] = useState(null);
+
   // admin modals
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({ event: "", year: "", name: "", imagely_id: "", source_url: "" });
@@ -44,7 +47,6 @@ export default function EventsGallery() {
       (t[ev] = t[ev] || {});
       (t[ev][yr] = t[ev][yr] || []).push(g);
     }
-    // sort galleries per year
     for (const ev of Object.keys(t)) {
       for (const yr of Object.keys(t[ev])) {
         t[ev][yr].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -52,6 +54,17 @@ export default function EventsGallery() {
     }
     return t;
   }, [galleries]);
+
+  // Event → its cover image (first gallery's cover) + total photo count
+  const eventSummaries = useMemo(() => {
+    return Object.entries(tree).map(([event, years]) => {
+      const allGalleries = Object.values(years).flat();
+      const totalPhotos = allGalleries.reduce((n, g) => n + (g.image_count || 0), 0);
+      const cover = allGalleries.find((g) => g.cover_image)?.cover_image || null;
+      const yearKeys = Object.keys(years).sort((a, b) => (b || "").localeCompare(a || ""));
+      return { event, years: yearKeys, totalPhotos, galleryCount: allGalleries.length, cover };
+    }).sort((a, b) => a.event.localeCompare(b.event));
+  }, [tree]);
 
   const submitAdd = async (e) => {
     e.preventDefault();
@@ -82,7 +95,6 @@ export default function EventsGallery() {
     e.preventDefault();
     const { data } = await api.post("/galleries/sync", syncForm);
     setSyncJob({ ...data, processed: 0, total: 0, created: 0 });
-    // poll every 2s
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
@@ -115,107 +127,197 @@ export default function EventsGallery() {
   };
 
   const openGallery = async (g) => {
-    // fetch full images for this gallery
     const { data } = await api.get(`/galleries/${g.gallery_id}`);
     setViewer({ gallery: data, index: 0 });
   };
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="font-black text-3xl">Events Gallery</h1>
-        <p className="text-[var(--muted-fg)] text-sm">Photos from our events & trips — browse inside the app.</p>
-      </div>
+  // ---------- Header used at all three levels ----------
+  const Header = () => (
+    <div>
+      <h1 className="font-black text-3xl">Events Gallery</h1>
+      <p className="text-[var(--muted-fg)] text-sm">Photos from our events & trips — browse inside the app.</p>
+    </div>
+  );
+  const TopTiles = () => (
+    <div className="grid grid-cols-2 gap-3">
+      <Link to="/events" data-testid="gallery-top-events">
+        <Card className="bg-[var(--primary)] text-white h-full p-3">
+          <Calendar size={24} weight="fill" />
+          <div className="font-black mt-2 leading-tight">Events</div>
+          <div className="text-[11px] opacity-90">Upcoming & past events</div>
+        </Card>
+      </Link>
+      <Link to="/tickets" data-testid="gallery-top-tickets">
+        <Card className="bg-[var(--accent)] h-full p-3">
+          <Ticket size={24} weight="fill" />
+          <div className="font-black mt-2 leading-tight">My Tickets</div>
+          <div className="text-[11px] opacity-80">Your purchased tickets</div>
+        </Card>
+      </Link>
+    </div>
+  );
+  const AdminControls = () => isAdmin ? (
+    <div className="grid grid-cols-2 gap-2">
+      <Button onClick={() => setSyncOpen(true)} variant="primary" className="w-full" data-testid="sync-btn">
+        <ArrowsClockwise size={14} weight="bold" /> Sync from rintaki.org
+      </Button>
+      <Button onClick={() => setAddOpen(true)} variant="dark" className="w-full" data-testid="add-btn">
+        <Plus size={14} weight="bold" /> Add by ID
+      </Button>
+    </div>
+  ) : null;
 
-      {/* Top tiles */}
-      <div className="grid grid-cols-2 gap-3">
-        <Link to="/events" data-testid="gallery-top-events">
-          <Card className="bg-[var(--primary)] text-white h-full p-3">
-            <Calendar size={24} weight="fill" />
-            <div className="font-black mt-2 leading-tight">Events</div>
-            <div className="text-[11px] opacity-90">Upcoming & past events</div>
-          </Card>
-        </Link>
-        <Link to="/tickets" data-testid="gallery-top-tickets">
-          <Card className="bg-[var(--accent)] h-full p-3">
-            <Ticket size={24} weight="fill" />
-            <div className="font-black mt-2 leading-tight">My Tickets</div>
-            <div className="text-[11px] opacity-80">Your purchased tickets</div>
-          </Card>
-        </Link>
-      </div>
-
-      {/* Admin controls */}
-      {isAdmin && (
-        <div className="grid grid-cols-2 gap-2">
-          <Button onClick={() => setSyncOpen(true)} variant="primary" className="w-full" data-testid="sync-btn">
-            <ArrowsClockwise size={14} weight="bold" /> Sync from rintaki.org
-          </Button>
-          <Button onClick={() => setAddOpen(true)} variant="dark" className="w-full" data-testid="add-btn">
-            <Plus size={14} weight="bold" /> Add by ID
-          </Button>
-        </div>
-      )}
-
-      {/* Hierarchical tree */}
+  // ---------- Level 1: Events grid ----------
+  const renderEvents = () => (
+    <>
+      <Header />
+      <TopTiles />
+      <AdminControls />
       {loading ? (
         <div className="text-sm text-[var(--muted-fg)]">Loading galleries…</div>
-      ) : galleries.length === 0 ? (
+      ) : eventSummaries.length === 0 ? (
         <EmptyState title="No galleries yet" body={isAdmin ? "Tap “Sync from rintaki.org” to pull every gallery." : "Check back soon."} icon={Images} />
       ) : (
-        <div className="space-y-5">
-          {Object.entries(tree).sort(([a], [b]) => a.localeCompare(b)).map(([event, years]) => (
-            <section key={event} data-testid={`event-${event.replace(/\s/g,"-")}`}>
-              <h2 className="font-black text-2xl leading-tight">{event}</h2>
-              <div className="space-y-3 mt-2">
-                {Object.entries(years).sort(([a], [b]) => (b || "").localeCompare(a || "")).map(([year, items]) => (
-                  <div key={year}>
-                    <div className="sticky top-[64px] z-10 -mx-1 px-1 bg-[var(--bg)]/90 backdrop-blur py-1 mb-1">
-                      <span className="inline-block bg-black text-white text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full border-2 border-black">
-                        {year}
-                      </span>
+        <div className="grid grid-cols-2 gap-3" data-testid="events-grid">
+          {eventSummaries.map(({ event, galleryCount, totalPhotos, cover }) => (
+            <button key={event} onClick={() => setNav({ event })}
+                    data-testid={`event-tile-${event.replace(/\s/g,"-")}`}
+                    className="text-left">
+              <Card className="p-0 overflow-hidden h-full">
+                <div className="aspect-square border-b-2 border-black bg-black overflow-hidden relative">
+                  {cover ? (
+                    <img src={cover} alt="" className="w-full h-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/40">
+                      <Images size={40} weight="bold" />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {items.map((g) => (
-                        <div key={g.gallery_id} className="relative" data-testid={`gallery-${g.gallery_id}`}>
-                          <button onClick={() => openGallery(g)} className="block w-full text-left">
-                            <Card className="p-0 overflow-hidden">
-                              <div className="aspect-square border-b-2 border-black overflow-hidden bg-black">
-                                {g.cover_image && <img src={g.cover_image} alt="" className="w-full h-full object-cover" loading="lazy" />}
-                              </div>
-                              <div className="p-2">
-                                <div className="font-black text-sm leading-tight line-clamp-2">{g.name}</div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-fg)] mt-1">
-                                  {g.image_count} photos
-                                </div>
-                              </div>
-                            </Card>
-                          </button>
-                          {isAdmin && (
-                            <div className="absolute top-1 right-1 flex gap-1">
-                              <button onClick={() => refresh(g.gallery_id)}
-                                      className="w-7 h-7 bg-white border-2 border-black rounded-full flex items-center justify-center shadow-[2px_2px_0_#111]"
-                                      title="Re-scrape images"
-                                      data-testid={`refresh-${g.gallery_id}`}>
-                                <ArrowsClockwise size={11} weight="bold" />
-                              </button>
-                              <button onClick={() => del(g.gallery_id)}
-                                      className="w-7 h-7 bg-white border-2 border-black rounded-full flex items-center justify-center shadow-[2px_2px_0_#111]"
-                                      data-testid={`del-${g.gallery_id}`}>
-                                <Trash size={11} weight="bold" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                  )}
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 flex items-end justify-between">
+                    <CaretRight size={18} weight="bold" className="text-white" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white bg-[var(--primary)] border-2 border-black rounded-full px-2 py-0.5">
+                      {totalPhotos} photos
+                    </span>
                   </div>
-                ))}
-              </div>
-            </section>
+                </div>
+                <div className="p-2">
+                  <div className="font-black text-sm leading-tight line-clamp-2">{event}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-fg)] mt-1">
+                    {galleryCount} {galleryCount === 1 ? "gallery" : "galleries"}
+                  </div>
+                </div>
+              </Card>
+            </button>
           ))}
         </div>
       )}
+    </>
+  );
+
+  // ---------- Level 2: Years list (text buttons only) ----------
+  const renderYears = () => {
+    const summary = eventSummaries.find((s) => s.event === nav.event);
+    const years = summary?.years || [];
+    return (
+      <>
+        <button onClick={() => setNav(null)} data-testid="back-to-events"
+                className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-widest">
+          <ArrowLeft size={14} weight="bold" /> All events
+        </button>
+        <div>
+          <h1 className="font-black text-3xl leading-tight">{nav.event}</h1>
+          <p className="text-[var(--muted-fg)] text-sm">Pick a year to see sub-galleries.</p>
+        </div>
+        {years.length === 0 ? (
+          <EmptyState title="No years yet" icon={Images} />
+        ) : (
+          <div className="space-y-2" data-testid="years-list">
+            {years.map((year) => {
+              const sub = tree[nav.event]?.[year] || [];
+              const photos = sub.reduce((n, g) => n + (g.image_count || 0), 0);
+              return (
+                <button key={year} onClick={() => setNav({ event: nav.event, year })}
+                        data-testid={`year-btn-${year}`}
+                        className="w-full text-left">
+                  <Card className="p-4 flex items-center justify-between">
+                    <div>
+                      <div className="font-black text-2xl">{year}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-fg)]">
+                        {sub.length} {sub.length === 1 ? "gallery" : "galleries"} · {photos} photos
+                      </div>
+                    </div>
+                    <CaretRight size={20} weight="bold" />
+                  </Card>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  // ---------- Level 3: Sub-galleries grid (images) ----------
+  const renderGalleries = () => {
+    const subs = tree[nav.event]?.[nav.year] || [];
+    return (
+      <>
+        <button onClick={() => setNav({ event: nav.event })} data-testid="back-to-years"
+                className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-widest">
+          <ArrowLeft size={14} weight="bold" /> {nav.event}
+        </button>
+        <div>
+          <h1 className="font-black text-3xl leading-tight">{nav.event}</h1>
+          <div className="inline-block bg-black text-white text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full border-2 border-black mt-1">
+            {nav.year}
+          </div>
+        </div>
+        {subs.length === 0 ? (
+          <EmptyState title="No galleries" icon={Images} />
+        ) : (
+          <div className="grid grid-cols-2 gap-2" data-testid="galleries-grid">
+            {subs.map((g) => (
+              <div key={g.gallery_id} className="relative" data-testid={`gallery-${g.gallery_id}`}>
+                <button onClick={() => openGallery(g)} className="block w-full text-left">
+                  <Card className="p-0 overflow-hidden">
+                    <div className="aspect-square border-b-2 border-black overflow-hidden bg-black">
+                      {g.cover_image && <img src={g.cover_image} alt="" className="w-full h-full object-cover" loading="lazy" />}
+                    </div>
+                    <div className="p-2">
+                      <div className="font-black text-sm leading-tight line-clamp-2">{g.name}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-fg)] mt-1">
+                        {g.image_count} photos
+                      </div>
+                    </div>
+                  </Card>
+                </button>
+                {isAdmin && (
+                  <div className="absolute top-1 right-1 flex gap-1">
+                    <button onClick={() => refresh(g.gallery_id)}
+                            className="w-7 h-7 bg-white border-2 border-black rounded-full flex items-center justify-center shadow-[2px_2px_0_#111]"
+                            title="Re-scrape images"
+                            data-testid={`refresh-${g.gallery_id}`}>
+                      <ArrowsClockwise size={11} weight="bold" />
+                    </button>
+                    <button onClick={() => del(g.gallery_id)}
+                            className="w-7 h-7 bg-white border-2 border-black rounded-full flex items-center justify-center shadow-[2px_2px_0_#111]"
+                            data-testid={`del-${g.gallery_id}`}>
+                      <Trash size={11} weight="bold" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      {!nav && renderEvents()}
+      {nav && !nav.year && renderYears()}
+      {nav && nav.year && renderGalleries()}
 
       {/* Add modal */}
       {addOpen && (

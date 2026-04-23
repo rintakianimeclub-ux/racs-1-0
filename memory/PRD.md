@@ -143,3 +143,33 @@ See `/app/memory/test_credentials.md`.
 - Fix: ForumThread load logic now prefers the topic endpoint when a forum slug returns 0 topics (Asgaros reuses slugs between empty forums and topics).
 - Fix: Improved "plugin needs upgrade" detection — now catches WP's `"No route was found"` 404 message and returns a clear 502 with upgrade instructions instead of a cryptic 404.
 - **ACTION REQUIRED (USER)**: Upload `/app/wp-plugin/rintaki-app-sync.php` v1.3.0 to `rintaki.org` → *Plugins → Rintaki App Sync → Edit* (or re-zip and reinstall). Reply will 502 with an upgrade notice until this is done.
+
+### 2026-04-23 — Four-feature round (verified end-to-end)
+
+**1. TCG card titles from WP gallery figcaptions**
+- Scraper `_scrape_page_images` now collects `<figcaption>` + Elementor lightbox title for every image.
+- New parser `_parse_card_caption` extracts Set #, Card #, and Rarity from captions like "Set 1 – #1 – Common" (also handles "Super Rare", em/en-dashes, hyphens, pipes).
+- Cards now store: name=full caption, number=sortable `S1-001`, rarity=`Common|Rare|Super Rare|…`.
+- `POST /api/tcg/collections/{id}/resync` now **relabels** existing cards in-place when URLs already exist. Verified: all 60 cards in "Fashionista 2026 Collection" relabeled on first call (0 added, 60 relabeled).
+
+**2. Spotlight native phone uploads**
+- `POST /api/feed/upload` (multipart) accepts UploadFile for images (≤12MB: jpg/png/webp/heic/gif) and videos (≤60MB: mp4/mov/m4v/webm/3gp); streams to `/app/backend/uploads/spotlight/` and returns a relative URL.
+- Files served via `app.mount("/api/uploads/spotlight", StaticFiles(...))` so they pass through the k8s `/api/*` ingress on port 8001.
+- Frontend Feed new-post modal replaced URL input with **Take photo/video** (camera, `capture="environment"`) + **Choose from phone** buttons. Live upload progress bar, auto-validates video duration ≤15s before submit.
+- Admin queue + public feed render uploaded URLs via `resolveMediaUrl()` (prefixes `REACT_APP_BACKEND_URL`).
+
+**3. Live Points & Anime Cash guides (synced from rintaki.org)**
+- `GET /api/guides/points` → scrapes `https://rintaki.org/points/`
+- `GET /api/guides/anime-cash` → scrapes `https://rintaki.org/member-dashboard/anime-cash/`
+- Returns sanitized HTML (strips scripts/styles/forms/nav/header/footer/cart/MyCred per-user widgets), absolutizes links/images, caches 1h with stale-fallback, `?refresh=1` force-refresh.
+- `Guides.jsx` rewritten with a shared `<LiveGuide>` wrapper: loading spinner, admin refresh button, "Cached/Just synced/Stale" footer, offline fallback Cards. New `.rintaki-guide` typography class in `index.css`.
+
+**4. Events Gallery 4-level drill-down**
+- Rewrote `EventsGallery.jsx` with `nav` state machine:
+  1. Events grid (tiles with first-gallery cover image + total photo count)
+  2. Year list (text-only buttons, no images) — shows gallery/photo counts per year
+  3. Sub-galleries grid (Cosplayers, Misc, etc. with cover images)
+  4. In-app fullscreen Viewer (unchanged)
+- Back chevrons at each level, tested with Anime Expo → 2009 → Cosplayers/Misc.
+
+**ACTION REQUIRED (USER)**: *None.* All four features work without additional plugin updates. Existing `rintaki-app-sync.php` v1.3.0 still needs uploading for forum replies (unchanged from previous session).

@@ -4,6 +4,14 @@ import { Card, Button, Avatar } from "@/components/ui-brutal";
 import { Users, ChatsCircle, Calendar, Newspaper, VideoCamera, FilmSlate, Check, X } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 
+const BACKEND = process.env.REACT_APP_BACKEND_URL || "";
+const resolveMediaUrl = (u) => {
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("data:")) return u;
+  if (u.startsWith("/api/")) return `${BACKEND}${u}`;
+  return u;
+};
+
 export default function Admin() {
   const [stats, setStats] = useState(null);
   const [pending, setPending] = useState([]);
@@ -71,9 +79,9 @@ export default function Admin() {
                 <div className="flex">
                   <div className="w-28 h-28 bg-black flex-shrink-0 border-r-2 border-black">
                     {p.media_type === "video" ? (
-                      <video src={p.media_url} controls className="w-full h-full object-cover" />
+                      <video src={resolveMediaUrl(p.media_url)} controls playsInline className="w-full h-full object-cover" />
                     ) : (
-                      <img src={p.media_url} alt="" className="w-full h-full object-cover" />
+                      <img src={resolveMediaUrl(p.media_url)} alt="" className="w-full h-full object-cover" />
                     )}
                   </div>
                   <div className="flex-1 p-3 min-w-0">

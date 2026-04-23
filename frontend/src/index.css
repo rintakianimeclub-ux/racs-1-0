@@ -149,3 +149,32 @@ input, textarea, select {
 
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+
+/* ---------- Scraped guides from rintaki.org ---------- */
+.rintaki-guide h1 { font-size: 1.75rem; font-weight: 900; margin: 1rem 0 0.5rem; }
+.rintaki-guide h2 { font-size: 1.3rem; font-weight: 800; margin: 1rem 0 0.4rem; }
+.rintaki-guide h3, .rintaki-guide h4, .rintaki-guide h5 { font-size: 1.05rem; font-weight: 800; margin: 0.8rem 0 0.3rem; }
+.rintaki-guide p { margin: 0.35rem 0; }
+.rintaki-guide ul { list-style: disc; padding-left: 1.25rem; margin: 0.4rem 0; }
+.rintaki-guide ol { list-style: decimal; padding-left: 1.25rem; margin: 0.4rem 0; }
+.rintaki-guide li { margin: 0.15rem 0; }
+.rintaki-guide a { color: var(--primary); text-decoration: underline; }
+.rintaki-guide hr { border: none; border-top: 2px solid var(--border); margin: 1rem 0; }
+.rintaki-guide blockquote {
+  border-left: 3px solid var(--primary); background: var(--muted);
+  padding: 0.5rem 0.75rem; margin: 0.6rem 0; font-style: italic;
+}
+.rintaki-guide table {
+  width: 100%; border-collapse: collapse; font-size: 0.85rem;
+  border: 2px solid var(--border); margin: 0.6rem 0;
+  display: block; overflow-x: auto;
+}
+.rintaki-guide table th, .rintaki-guide table td {
+  border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left;
+}
+.rintaki-guide table th { background: var(--secondary); font-weight: 800; }
+.rintaki-guide img { max-width: 100%; height: auto; border: 2px solid var(--border); border-radius: 0.5rem; margin: 0.4rem 0; }
+.rintaki-guide figure { margin: 0.5rem 0; }
+.rintaki-guide figcaption { font-size: 0.75rem; color: var(--muted-fg); text-align: center; }
+.rintaki-guide section, .rintaki-guide article, .rintaki-guide div { background: transparent !important; padding: 0; margin: 0; }

@@ -87,7 +87,10 @@ export default function TCGCollection() {
               setResyncMsg("");
               try {
                 const { data } = await api.post(`/tcg/collections/${id}/resync`);
-                setResyncMsg(data.added === 0 ? "Up to date — no new cards found." : `✓ Added ${data.added} new cards.`);
+                const parts = [];
+                if (data.added) parts.push(`+${data.added} new`);
+                if (data.relabeled) parts.push(`relabeled ${data.relabeled}`);
+                setResyncMsg(parts.length ? `✓ ${parts.join(" · ")}.` : "Up to date — no changes.");
                 await load();
               } catch (e) {
                 setResyncMsg(e.response?.data?.detail || "Resync failed");
