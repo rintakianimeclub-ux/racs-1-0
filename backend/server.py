@@ -1697,6 +1697,156 @@ async def guide_points(refresh: bool = False):
 async def guide_anime_cash(refresh: bool = False):
     return await _guide_cached("anime-cash", "https://rintaki.org/member-dashboard/anime-cash/", refresh=refresh)
 
+
+def _parse_guide_sections(html: str, drop_headings: Optional[list] = None) -> list:
+    """Turn scraped guide HTML into [{heading, intro, items:[{amount, unit, desc}]}, ...].
+
+    Strategy:
+      1. Flatten the DOM to a linear stream of heading / paragraph-block nodes.
+      2. For each paragraph, split on <br> or newlines so each "line" can be classified.
+      3. A line that STARTS with a parenthesized amount — `(1pt)`, `(25pts per hr)`,
+         `(10pts per $25)`, `($5 / month)`, `(Varies)`, `(15-30pts)` — becomes a structured item.
+      4. Everything else becomes intro text.
+      5. `drop_headings` (case-insensitive) skips whole sections (e.g. per-user widgets).
+    """
+    from bs4 import BeautifulSoup, NavigableString
+    import re
+
+    soup = BeautifulSoup(f"<div>{html}</div>", "lxml")
+    root = soup.div
+    drop_set = {h.strip().lower() for h in (drop_headings or [])}
+
+    # Normalize <br> → newlines so .get_text() keeps line structure.
+    for br in root.find_all("br"):
+        br.replace_with(NavigableString("\n"))
+
+    # Walk the tree and emit an ordered stream of (kind, text) tokens.
+    # kind ∈ {"heading", "para"}. Headings carry a level.
+    tokens = []
+
+    def emit_paragraphs(text: str):
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                tokens.append(("line", line))
+
+    def walk(node):
+        for child in node.children:
+            name = getattr(child, "name", None)
+            if name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                tokens.append(("heading", int(name[1]), child.get_text(" ", strip=True)))
+            elif name in ("p", "li", "blockquote"):
+                # Harvest the whole block, preserving the newlines we inserted for <br>.
+                emit_paragraphs(child.get_text())
+            elif name in ("ul", "ol", "dl"):
+                # Visit each list item recursively — list items may contain their own headings
+                for li in child.find_all(["li", "dd", "dt"], recursive=False):
+                    walk(li)
+            elif name in ("table",):
+                # Skip tables (usually per-user points history)
+                continue
+            elif name is None:
+                # Text node directly under a container
+                text = str(child).strip()
+                if text:
+                    emit_paragraphs(text)
+            else:
+                walk(child)
+
+    walk(root)
+
+    # Build sections
+    ITEM_RE = re.compile(r"^\(\s*([^)]+?)\s*\)\s*(.*)", re.S)
+    AMOUNT_RE = re.compile(r"^([\d\-\.\$]+)\s*(.*)$")
+
+    sections = []
+    current = None
+    for tok in tokens:
+        if tok[0] == "heading":
+            _, level, heading = tok
+            if not heading:
+                continue
+            if heading.lower() in drop_set:
+                current = {"_drop": True}
+                continue
+            current = {"heading": heading, "level": level, "intro": "", "items": []}
+            sections.append(current)
+        elif tok[0] == "line":
+            line = tok[1]
+            if not current or current.get("_drop"):
+                continue
+            m = ITEM_RE.match(line)
+            if m:
+                amount_raw = m.group(1).strip()
+                desc = m.group(2).strip(" .")
+                am = AMOUNT_RE.match(amount_raw)
+                if am and am.group(1):
+                    value = am.group(1).strip()
+                    unit = am.group(2).strip() or "pts"
+                else:
+                    value = amount_raw
+                    unit = ""
+                if desc:
+                    current["items"].append({"amount": value, "unit": unit, "desc": desc})
+                else:
+                    current["intro"] = (current["intro"] + " " + line).strip()
+            else:
+                current["intro"] = (current["intro"] + " " + line).strip()
+
+    # Drop empty sections & purely meta headings (H1/H2 that only wrap children),
+    # and the "rev (…)" timestamp lines.
+    cleaned = []
+    for s in sections:
+        if s.get("_drop"):
+            continue
+        # Normalise intro: strip double spaces, strip "rev (05.21.2023)" leading marker
+        s["intro"] = re.sub(r"\s{2,}", " ", s.get("intro") or "").strip()
+        s["intro"] = re.sub(r"^rev\s*\([^)]+\)\s*", "", s["intro"], flags=re.I)
+        if not s["intro"] and not s["items"]:
+            continue
+        s.pop("_drop", None)
+        cleaned.append(s)
+    return cleaned
+
+
+@api.get("/guides/points/parsed")
+async def guide_points_parsed(refresh: bool = False):
+    """Structured version of the Points guide — sections + point items for nicer rendering."""
+    data = await _guide_cached("points", "https://rintaki.org/points/", refresh=refresh)
+    sections = _parse_guide_sections(
+        data.get("html", ""),
+        drop_headings=[
+            "Points Guide",  # the page H1 is redundant with our UI heading
+            "Current Point Total",
+            "Current Rank",
+            "Points History",
+        ],
+    )
+    return {
+        "title": data.get("title", "Points Guide"),
+        "sections": sections,
+        "cached": data.get("cached"),
+        "stale": data.get("stale", False),
+        "source_url": "https://rintaki.org/points/",
+    }
+
+@api.get("/guides/anime-cash/parsed")
+async def guide_anime_cash_parsed(refresh: bool = False):
+    """Structured version of the Anime Cash guide."""
+    data = await _guide_cached("anime-cash", "https://rintaki.org/member-dashboard/anime-cash/", refresh=refresh)
+    sections = _parse_guide_sections(
+        data.get("html", ""),
+        drop_headings=["Anime Cash"],
+    )
+    return {
+        "title": data.get("title", "Anime Cash"),
+        "sections": sections,
+        "cached": data.get("cached"),
+        "stale": data.get("stale", False),
+        "source_url": "https://rintaki.org/member-dashboard/anime-cash/",
+    }
+
+
 # ----------------- WooCommerce Shop (proxy to WC Store API) -----------------
 WC_BASE = os.environ.get("RINTAKI_WC_BASE", "https://rintaki.org")
 _wc_cache: dict = {}  # key -> (ts, data)

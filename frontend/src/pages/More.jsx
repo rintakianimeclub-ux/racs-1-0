@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui-brutal";
@@ -17,9 +17,16 @@ const TILES = [
 
 export default function More() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const isMember = !!user && (user.role === "admin" || user.is_member);
   const [links, setLinks] = useState({ social: {} });
   useEffect(() => { api.get("/links").then(({ data }) => setLinks(data)).catch(() => {}); }, []);
+
+  const onLogout = async () => {
+    // Navigate away first so any protected wrapper doesn't redirect to /login.
+    navigate("/", { replace: true });
+    await logout();
+  };
 
   return (
     <div className="space-y-5">
@@ -105,7 +112,7 @@ export default function More() {
       </a>
 
       {user ? (
-        <button onClick={logout} data-testid="logout-action"
+        <button onClick={onLogout} data-testid="logout-action"
                 className="w-full bg-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
           <SignOut size={16} weight="bold" /> Logout
         </button>

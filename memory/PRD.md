@@ -173,3 +173,9 @@ See `/app/memory/test_credentials.md`.
 - Back chevrons at each level, tested with Anime Expo → 2009 → Cosplayers/Misc.
 
 **ACTION REQUIRED (USER)**: *None.* All four features work without additional plugin updates. Existing `rintaki-app-sync.php` v1.3.0 still needs uploading for forum replies (unchanged from previous session).
+
+### 2026-04-23 — Guides redesign + logout fix
+- **Guides redesigned**: New `/api/guides/points/parsed` + `/api/guides/anime-cash/parsed` endpoints parse the scraped HTML into structured `{heading, intro, items:[{amount,unit,desc}]}` sections. Regex splits on `<br>`/newlines inside `<p>` tags, matches lines starting with `(AMOUNT UNIT[ per X])` as items. Admin refresh still supported.
+- `Guides.jsx` rewritten: black hero card + user's live stat (Points/Anime Cash balance), sectioned cards with themed icons (Star/Users/Trophy/Gift) and brutal color rotation (red/gold/accent/black/purple/white), each item gets a pill showing the amount with shortened unit ("25 PTS / HR", "$5 / MO"). Six sections render from rintaki.org/points: Member Status, Sign-In Sheet, Submissions, Awards, Community, Bonuses.
+- The Anime Cash page on rintaki.org is PMPro-gated — app detects the "Membership Required" placeholder and falls back to an in-app summary with a "Locked on rintaki.org" notice.
+- **Logout fix**: logout from Dashboard/More used to leave users on `/login` because `<Protected>` redirected before the home navigate ran. Fix: call `navigate("/", { replace: true })` BEFORE `logout()` so setUser(null) re-renders on the already-public home route. Also added a "Log out" button to the Members Dashboard itself (previously only on /more).

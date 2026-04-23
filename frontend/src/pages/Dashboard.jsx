@@ -1,10 +1,10 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker } from "@/components/ui-brutal";
 import {
   UserCircle, Trophy, Buildings, Airplane, ShoppingBag, DiscordLogo,
-  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, HouseLine, CreditCard,
+  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, HouseLine, CreditCard, SignOut,
 } from "@phosphor-icons/react";
 
 // Color rotation: red (primary) → white → gold (accent)
@@ -25,7 +25,14 @@ const TILES = [
 ];
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const onLogout = async () => {
+    // Navigate to the public home FIRST so the <Protected> wrapper on /dashboard
+    // doesn't redirect to /login the moment setUser(null) fires.
+    navigate("/", { replace: true });
+    await logout();
+  };
 
   return (
     <div className="space-y-5">
@@ -72,6 +79,11 @@ export default function Dashboard() {
           <CaretRight size={18} weight="bold" />
         </Card>
       </a>
+
+      <button onClick={onLogout} data-testid="dash-logout"
+              className="w-full bg-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+        <SignOut size={16} weight="bold" /> Log out
+      </button>
     </div>
   );
 }
