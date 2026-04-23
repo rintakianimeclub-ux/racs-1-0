@@ -3383,6 +3383,11 @@ CLAIMS_DIR_STATIC = Path("/app/backend/uploads/claims")
 CLAIMS_DIR_STATIC.mkdir(parents=True, exist_ok=True)
 app.mount("/api/uploads/claims", StaticFiles(directory=str(CLAIMS_DIR_STATIC)), name="claim-uploads")
 
+# Serve the WP plugin zip so the admin can download + install it on rintaki.org
+PLUGIN_DIR = Path("/app/backend/uploads/plugin")
+PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/api/uploads/plugin", StaticFiles(directory=str(PLUGIN_DIR)), name="plugin-zip")
+
 _frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
