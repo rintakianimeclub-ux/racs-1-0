@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const BACKEND_URL = "https://rintaki.org";
-export const API = `${BACKEND_URL}/api`;
+export const API = `${BACKEND_URL}/wp-json`;
 
 export const api = axios.create({
   baseURL: API,
