@@ -25,10 +25,8 @@ export default function Login() {
   };
 
   const googleLogin = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/auth/callback";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
+  window.location.href = "https://rintaki.org/wp-login.php";
+};
 
   return (
     <div className="min-h-screen relative overflow-hidden grid md:grid-cols-2">
