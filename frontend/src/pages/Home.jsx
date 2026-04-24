@@ -154,7 +154,7 @@ export default function Home() {
                 <Card className="p-0 overflow-hidden">
                   {p.image && <div className="aspect-video border-b-2 border-black overflow-hidden"><img src={p.image} className="w-full h-full object-cover" alt="" /></div>}
                   <div className="p-3">
-                    <h3 className="font-black text-base line-clamp-2" dangerouslySetInnerHTML={{ __html: p.title.rendered }}>
+                    <h3 className="font-black text-base line-clamp-2" dangerouslySetInnerHTML={{ __html: p.title.rendered }}/>
                     <p className="mt-1 text-xs text-[var(--muted-fg)] line-clamp-2">stripHtml(p.excerpt.rendered)</p>
                     <div className="mt-2 text-[10px] font-bold uppercase tracking-widest text-[var(--primary)]">Read →</div>
                   </div>
