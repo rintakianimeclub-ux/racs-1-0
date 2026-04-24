@@ -28,7 +28,7 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       const [f, e, t, m] = await Promise.all([
-        api.get("/rintaki/feed").catch(() => ({ data: { posts: [] } })),
+        api.get("/wp/v2/posts").catch(() => ({ data: { posts: [] } })),
         api.get("/events").catch(() => ({ data: { events: [] } })),
         api.get("/forums/threads").catch(() => ({ data: { threads: [] } })),
         api.get("/magazines").catch(() => ({ data: { magazines: [] } })),
