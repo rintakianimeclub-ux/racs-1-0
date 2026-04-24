@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { Card } from "@/components/ui-brutal";
 import {
-  Calendar, BookOpen, Buildings, Ticket, ShieldStar, CaretRight, SignOut, HouseLine, SignIn, Sparkle,
+  Calendar, BookOpen, Buildings, Ticket, CaretRight, SignOut, HouseLine, SignIn, Sparkle,
   TiktokLogo, InstagramLogo, TwitterLogo, FacebookLogo, YoutubeLogo, DiscordLogo,
 } from "@phosphor-icons/react";
 
@@ -34,33 +34,6 @@ export default function More() {
         <h1 className="font-black text-3xl">More</h1>
         <p className="text-[var(--muted-fg)] text-sm">Your app menu.</p>
       </div>
-
-      {user?.role === "admin" && (
-        <Link to="/admin" data-testid="more-admin-panel">
-          <Card className="bg-black text-white flex items-center gap-3">
-            <div className="w-10 h-10 bg-[var(--secondary)] text-black border-2 border-black rounded-full flex items-center justify-center"><ShieldStar size={18} weight="fill" /></div>
-            <div className="flex-1">
-              <div className="font-black">Admin Panel</div>
-              <div className="text-xs opacity-80">Manage members, events & content</div>
-            </div>
-            <CaretRight size={18} weight="bold" />
-          </Card>
-        </Link>
-      )}
-
-      {/* Members Dashboard — only for actual members */}
-      {isMember && (
-        <Link to="/dashboard" data-testid="more-members-panel">
-          <Card className="bg-[var(--primary)] text-white flex items-center gap-3">
-            <div className="w-10 h-10 bg-white text-black border-2 border-black rounded-full flex items-center justify-center"><ShieldStar size={18} weight="fill" /></div>
-            <div className="flex-1">
-              <div className="font-black">Members Dashboard</div>
-              <div className="text-xs opacity-90">Members-only features & trips</div>
-            </div>
-            <CaretRight size={18} weight="bold" />
-          </Card>
-        </Link>
-      )}
 
       {/* Non-member: show Join CTA */}
       {!isMember && (

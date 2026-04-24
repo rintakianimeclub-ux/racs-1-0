@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Button, Input, Textarea, Sticker } from "@/components/ui-brutal";
-import { Camera, PencilSimple, ArrowSquareOut, Trophy, CurrencyCircleDollar, Check, X } from "@phosphor-icons/react";
+import { Camera, PencilSimple, ArrowSquareOut, Trophy, CurrencyCircleDollar, Check, X, ShieldStar, CaretRight } from "@phosphor-icons/react";
 
 function fileToB64(file) {
   return new Promise((res, rej) => {
@@ -163,6 +163,32 @@ export default function Profile() {
         )}
         {profile.bio && <p className="text-sm mt-2">{profile.bio}</p>}
       </div>
+
+      {/* Dashboards (self only) — moved here from More page so they sit with Account details */}
+      {isSelf && profile.role === "admin" && (
+        <Link to="/admin" data-testid="profile-admin-panel">
+          <Card className="bg-black text-white flex items-center gap-3">
+            <div className="w-10 h-10 bg-[var(--secondary)] text-black border-2 border-black rounded-full flex items-center justify-center"><ShieldStar size={18} weight="fill" /></div>
+            <div className="flex-1">
+              <div className="font-black">Admin Panel</div>
+              <div className="text-xs opacity-80">Manage members, events & content</div>
+            </div>
+            <CaretRight size={18} weight="bold" />
+          </Card>
+        </Link>
+      )}
+      {isSelf && (profile.is_member || profile.role === "admin") && (
+        <Link to="/dashboard" data-testid="profile-members-panel">
+          <Card className="bg-[var(--primary)] text-white flex items-center gap-3">
+            <div className="w-10 h-10 bg-white text-black border-2 border-black rounded-full flex items-center justify-center"><ShieldStar size={18} weight="fill" /></div>
+            <div className="flex-1">
+              <div className="font-black">Members Dashboard</div>
+              <div className="text-xs opacity-90">Members-only features & trips</div>
+            </div>
+            <CaretRight size={18} weight="bold" />
+          </Card>
+        </Link>
+      )}
 
       {/* Points / cash quick stats (member only) */}
       {(profile.is_member || profile.role === "admin") && (
