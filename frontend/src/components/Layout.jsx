@@ -57,16 +57,19 @@ export default function Layout({ children }) {
               <>
                 <button
                   onClick={() => navigate("/points/history")}
-                  className="flex items-center gap-1 bg-[var(--secondary)] border-2 border-black rounded-full px-2.5 py-1 shadow-[3px_3px_0_#111]"
+                  className={`flex items-center gap-1 bg-[var(--secondary)] border-2 border-black rounded-full px-2.5 py-1 shadow-[3px_3px_0_#111] ${user.mycred_offline ? "opacity-70" : ""}`}
                   data-testid="points-pill"
+                  title={user.mycred_offline ? "Can't reach rintaki.org — showing last known balance" : ""}
                 >
                   <Trophy size={12} weight="fill" />
                   <span className="font-black text-xs">{user.points ?? 0}</span>
+                  {user.mycred_offline && <span className="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-pulse" data-testid="mycred-offline-dot" />}
                 </button>
                 <button
                   onClick={() => navigate("/anime-cash/history")}
-                  className="flex items-center gap-1 bg-[var(--accent)] border-2 border-black rounded-full px-2.5 py-1 shadow-[3px_3px_0_#111]"
+                  className={`flex items-center gap-1 bg-[var(--accent)] border-2 border-black rounded-full px-2.5 py-1 shadow-[3px_3px_0_#111] ${user.mycred_offline ? "opacity-70" : ""}`}
                   data-testid="cash-pill"
+                  title={user.mycred_offline ? "Can't reach rintaki.org — showing last known balance" : ""}
                 >
                   <CurrencyCircleDollar size={12} weight="fill" />
                   <span className="font-black text-xs">{user.anime_cash ?? 0}</span>

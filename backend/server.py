@@ -18,7 +18,7 @@ from typing import List, Optional
 from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, Header, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field, EmailStr
 
 # ----------------- Setup -----------------
@@ -28,6 +28,9 @@ logger = logging.getLogger("rintaki")
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+# GridFS buckets for durable upload storage (survives container restarts, unlike local disk).
+fs_spotlight = AsyncIOMotorGridFSBucket(db, bucket_name="spotlight")
+fs_claims    = AsyncIOMotorGridFSBucket(db, bucket_name="claims")
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
@@ -212,7 +215,13 @@ async def mycred_balance(email: str) -> dict:
                 headers={"X-Rintaki-Key": key},
             )
             if r.status_code != 200:
-                return {"found": False}
+                # Fall back to the most recent cached value (even if expired) so the UI
+                # doesn't flash a $0 balance when the WP site has a brief hiccup.
+                if cached:
+                    return {"found": True, "points": cached[1], "anime_cash": cached[2],
+                            "membership_level": cached[3], "membership_name": cached[4],
+                            "cached": True, "stale": True, "offline": True}
+                return {"found": False, "offline": True, "reason": f"WP {r.status_code}"}
             data = r.json() if r.text else {}
             if data.get("found"):
                 _mycred_cache[email] = (
@@ -225,7 +234,12 @@ async def mycred_balance(email: str) -> dict:
             return data
     except Exception as e:
         logger.warning(f"mycred_balance failed: {e}")
-        return {"found": False}
+        # Same stale-fallback path on network errors.
+        if cached:
+            return {"found": True, "points": cached[1], "anime_cash": cached[2],
+                    "membership_level": cached[3], "membership_name": cached[4],
+                    "cached": True, "stale": True, "offline": True}
+        return {"found": False, "offline": True, "reason": str(e)}
 
 async def mycred_adjust(email: str, type_slug: str, amount: int, reason: str, ref: Optional[str] = None) -> dict:
     """Push a point adjustment to MyCred on rintaki.org. Returns {ok, skipped?, new_balance?, reason?}.
@@ -263,10 +277,13 @@ async def public_user_enriched(u: dict) -> dict:
     """Return public_user(u) but overwrite points/anime_cash/membership with MyCred when available."""
     base = public_user(u)
     bal = await mycred_balance(u.get("email", ""))
+    # Let the frontend render a small "syncing…" indicator on the pills when MyCred is unreachable.
+    base["mycred_offline"] = bool(bal.get("offline"))
+    base["mycred_stale"] = bool(bal.get("stale"))
     if bal.get("found"):
         base["points"] = bal["points"]
         base["anime_cash"] = bal["anime_cash"]
-        base["synced_with_mycred"] = True
+        base["synced_with_mycred"] = not bal.get("offline", False)
         lvl = int(bal.get("membership_level", 0) or 0)
         if lvl > 0:
             base["membership_level"] = lvl
@@ -2015,15 +2032,18 @@ class PointClaimIn(BaseModel):
     photo_data_url: Optional[str] = None  # base64-encoded data URL or regular URL
 
 async def _store_claim_photo(data_url: str, user_id: str) -> Optional[str]:
-    """Save a base64 data URL photo attached to a claim and return its public URL."""
+    """Save a base64 data URL photo attached to a claim into GridFS and return its public URL.
+
+    Photos are served via GET /api/uploads/claims/{filename} (also GridFS-backed), so they
+    survive container restarts.
+    """
     import base64
     import re
     if not data_url:
         return None
     m = re.match(r"^data:image/([a-zA-Z]+);base64,(.*)$", data_url)
     if not m:
-        # Assume it's already a URL (http or /api/uploads/...)
-        return data_url
+        return data_url  # assume caller passed a pre-uploaded URL
     ext = m.group(1).lower()
     if ext not in ("png", "jpeg", "jpg", "webp", "gif"):
         raise HTTPException(400, "Unsupported photo format")
@@ -2033,15 +2053,45 @@ async def _store_claim_photo(data_url: str, user_id: str) -> Optional[str]:
         raise HTTPException(400, "Invalid base64 photo")
     if len(raw) > 6 * 1024 * 1024:
         raise HTTPException(413, "Photo too large (max 6 MB)")
-    CLAIMS_DIR = Path("/app/backend/uploads/claims")
-    CLAIMS_DIR.mkdir(parents=True, exist_ok=True)
     fname = f"{user_id}_{uuid.uuid4().hex[:10]}.{ext if ext != 'jpeg' else 'jpg'}"
-    (CLAIMS_DIR / fname).write_bytes(raw)
+    await fs_claims.upload_from_stream(
+        fname, raw,
+        metadata={"user_id": user_id, "content_type": f"image/{ext}",
+                  "uploaded_at": iso(now_utc())},
+    )
     return f"/api/uploads/claims/{fname}"
+
+@api.get("/uploads/claims/{filename}")
+async def serve_claim_photo(filename: str):
+    """Stream a claim proof photo back out of GridFS."""
+    try:
+        grid_out = await fs_claims.open_download_stream_by_name(filename)
+    except Exception:
+        raise HTTPException(404, "File not found")
+    meta = (grid_out.metadata or {})
+    content_type = meta.get("content_type") or "image/jpeg"
+    from fastapi.responses import StreamingResponse
+
+    async def _iter():
+        while True:
+            chunk = await grid_out.readchunk()
+            if not chunk:
+                break
+            yield chunk
+    return StreamingResponse(_iter(), media_type=content_type, headers={"Cache-Control": "public, max-age=604800"})
 
 @api.post("/guides/points/claim")
 async def submit_point_claim(data: PointClaimIn, user: dict = Depends(require_member)):
     """Member submits a claim for a Points-Guide item that needs admin verification."""
+    # Rate-limit: max 5 claims per user per rolling hour. Prevents a bored member from
+    # flooding the admin queue; admin can always override via direct DB if needed.
+    one_hour_ago = (now_utc() - timedelta(hours=1)).isoformat()
+    recent_count = await db.point_claims.count_documents({
+        "user_id": user["user_id"],
+        "created_at": {"$gte": one_hour_ago},
+    })
+    if recent_count >= 5:
+        raise HTTPException(429, "You've hit the claim limit (5 per hour). Try again in a bit.")
     mode = _classify_item(data.item_heading, data.item_desc)
     if mode == "auto":
         raise HTTPException(400, "This item is awarded automatically — no claim needed.")
@@ -2326,21 +2376,33 @@ async def streak_1000_progress(user: dict = Depends(require_member)):
 
 
 # ----------------- Membership Anime Cash (monthly auto-award) -----------------
-# Values come straight from the rintaki.org Anime Cash page:
+# Defaults come straight from the rintaki.org Anime Cash page:
 #   Regular membership → $5 / month
 #   Premium membership → $10 / month
-# Level-name matching is case-insensitive and works on PMPro's display name (e.g. "PREMIUM (YEARLY)",
-# "REGULAR (MONTHLY)"). Levels that don't match return $0 and no award fires.
-MEMBERSHIP_CASH_RULES = [
-    (lambda name: "premium" in name, 10),
-    (lambda name: "regular" in name, 5),
+# Admin can override via `POST /admin/settings/membership-cash` — rules are stored in
+# MongoDB and hot-reloaded each time the monthly award check runs (no server restart needed).
+# Each rule is { match: "substring", amount: int }. First matching rule (case-insensitive)
+# wins, so order them most-specific → least-specific when overriding.
+DEFAULT_MEMBERSHIP_CASH_RULES = [
+    {"match": "premium", "amount": 10},
+    {"match": "regular", "amount": 5},
 ]
 
-def _monthly_cash_for_membership(membership_name: str) -> int:
+async def _load_membership_cash_rules() -> list:
+    doc = await db.settings.find_one({"_id": "membership_cash_rules"})
+    if doc and isinstance(doc.get("rules"), list) and doc["rules"]:
+        # Normalize: drop anything that doesn't have both keys
+        return [r for r in doc["rules"] if "match" in r and "amount" in r]
+    return DEFAULT_MEMBERSHIP_CASH_RULES
+
+def _monthly_cash_for_membership(membership_name: str, rules: list) -> int:
     n = (membership_name or "").lower()
-    for matcher, amount in MEMBERSHIP_CASH_RULES:
-        if matcher(n):
-            return amount
+    for r in rules:
+        try:
+            if str(r["match"]).lower() in n:
+                return int(r["amount"])
+        except (KeyError, ValueError, TypeError):
+            continue
     return 0
 
 async def _maybe_award_membership_cash(user: dict) -> Optional[int]:
@@ -2348,7 +2410,8 @@ async def _maybe_award_membership_cash(user: dict) -> Optional[int]:
 
     - First `/auth/me` call of a new month triggers the award (also catches members
       who join mid-month — they get that month's cash on their next app open).
-    - Amount is derived live from the member's current PMPro level (fetched via MyCred sync).
+    - Amount is derived live from the member's current PMPro level (fetched via MyCred sync)
+      and the admin-configurable rule table.
     - Idempotent via ref = `membership_cash:{user_id}:{YYYY-MM}`.
     """
     if not (user.get("role") == "admin" or user.get("is_member")):
@@ -2358,10 +2421,10 @@ async def _maybe_award_membership_cash(user: dict) -> Optional[int]:
     ref = f"membership_cash:{user['user_id']}:{period}"
     if await db.points_transactions.find_one({"ref": ref}):
         return None
-    # Pull live membership from MyCred (public_user_enriched already does this elsewhere).
     bal = await mycred_balance(user.get("email", ""))
     membership_name = bal.get("membership_name") or user.get("membership_name") or ""
-    amount = _monthly_cash_for_membership(membership_name)
+    rules = await _load_membership_cash_rules()
+    amount = _monthly_cash_for_membership(membership_name, rules)
     if amount <= 0:
         return None
     await add_anime_cash(
@@ -2380,6 +2443,29 @@ async def _maybe_award_membership_cash(user: dict) -> Optional[int]:
     except Exception:
         pass
     return amount
+
+
+class MembershipCashRulesIn(BaseModel):
+    rules: list[dict]  # [{"match": "premium", "amount": 10}, ...]
+
+@api.get("/admin/settings/membership-cash")
+async def admin_get_membership_cash_rules(user: dict = Depends(require_admin)):
+    return {"rules": await _load_membership_cash_rules(), "defaults": DEFAULT_MEMBERSHIP_CASH_RULES}
+
+@api.post("/admin/settings/membership-cash")
+async def admin_set_membership_cash_rules(data: MembershipCashRulesIn, user: dict = Depends(require_admin)):
+    clean = []
+    for r in data.rules:
+        try:
+            clean.append({"match": str(r["match"]).strip(), "amount": int(r["amount"])})
+        except (KeyError, ValueError, TypeError):
+            continue
+    await db.settings.update_one(
+        {"_id": "membership_cash_rules"},
+        {"$set": {"rules": clean, "updated_at": iso(now_utc()), "updated_by": user["user_id"]}},
+        upsert=True,
+    )
+    return {"ok": True, "rules": clean}
 
 
 async def _maybe_award_active_member(user: dict) -> Optional[int]:
@@ -2659,9 +2745,9 @@ async def admin_pending_posts(user: dict = Depends(require_admin)):
     return {"posts": posts}
 
 # ---- Spotlight native uploads (phone camera / gallery) ----
-UPLOADS_DIR = Path("/app/backend/uploads/spotlight")
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
+# Files are stored in MongoDB GridFS (bucket name = "spotlight") so they survive
+# container restarts/redeploys. A matching GET /api/uploads/spotlight/{filename}
+# endpoint streams them back out.
 # Per-file size ceiling (accepts short phone videos + high-res photos)
 MAX_IMAGE_BYTES = 12 * 1024 * 1024     # 12 MB
 MAX_VIDEO_BYTES = 60 * 1024 * 1024     # 60 MB (15s iPhone 4K HEVC ≈ 25 MB)
@@ -2686,7 +2772,8 @@ async def upload_spotlight_media(
 ):
     """Accept a native photo/video upload from the user's phone and return a URL.
 
-    The frontend then POSTs /feed/posts with media_url = returned URL.
+    The frontend then POSTs /feed/posts with media_url = returned URL. Files are
+    stored in GridFS, not on the container disk, so they survive redeploys.
     """
     if media_type not in ("image", "video"):
         raise HTTPException(400, "media_type must be image or video")
@@ -2695,39 +2782,63 @@ async def upload_spotlight_media(
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported {media_type} format .{ext}. Allowed: {', '.join(sorted(allowed))}.")
     limit = MAX_IMAGE_BYTES if media_type == "image" else MAX_VIDEO_BYTES
-    # Stream to disk, enforce limit
-    file_id = f"{user['user_id']}_{uuid.uuid4().hex[:10]}.{ext}"
-    dest = UPLOADS_DIR / file_id
+    # Buffer to bytes while enforcing the size limit (GridFS needs the whole blob).
+    filename = f"{user['user_id']}_{uuid.uuid4().hex[:10]}.{ext}"
     total = 0
+    chunks: list[bytes] = []
     try:
-        with open(dest, "wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)  # 1 MB chunks
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > limit:
-                    out.close()
-                    dest.unlink(missing_ok=True)
-                    human = f"{limit // (1024 * 1024)} MB"
-                    raise HTTPException(413, f"File too large. Max {human} for {media_type}s.")
-                out.write(chunk)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                human = f"{limit // (1024 * 1024)} MB"
+                raise HTTPException(413, f"File too large. Max {human} for {media_type}s.")
+            chunks.append(chunk)
     finally:
         await file.close()
-    # Basic content-type sanity
     ctype = (file.content_type or "").lower()
     if media_type == "image" and ctype and not ctype.startswith("image/"):
-        dest.unlink(missing_ok=True)
         raise HTTPException(400, "File content-type is not an image.")
     if media_type == "video" and ctype and not ctype.startswith("video/"):
-        dest.unlink(missing_ok=True)
         raise HTTPException(400, "File content-type is not a video.")
+    await fs_spotlight.upload_from_stream(
+        filename,
+        b"".join(chunks),
+        metadata={
+            "user_id": user["user_id"],
+            "content_type": ctype or ("image/" + ext if media_type == "image" else "video/" + ext),
+            "media_type": media_type,
+            "uploaded_at": iso(now_utc()),
+        },
+    )
     return {
-        "url": _public_upload_url(request, file_id),
-        "filename": file_id,
+        "url": _public_upload_url(request, filename),
+        "filename": filename,
         "size": total,
         "media_type": media_type,
     }
+
+@api.get("/uploads/spotlight/{filename}")
+async def serve_spotlight_upload(filename: str):
+    """Stream a Spotlight file (image/video) back out of GridFS."""
+    try:
+        grid_out = await fs_spotlight.open_download_stream_by_name(filename)
+    except Exception:
+        raise HTTPException(404, "File not found")
+    meta = (grid_out.metadata or {})
+    content_type = meta.get("content_type") or "application/octet-stream"
+    from fastapi.responses import StreamingResponse
+
+    async def _iter():
+        while True:
+            chunk = await grid_out.readchunk()
+            if not chunk:
+                break
+            yield chunk
+    headers = {"Cache-Control": "public, max-age=604800"}  # 7-day browser cache
+    return StreamingResponse(_iter(), media_type=content_type, headers=headers)
 
 @api.post("/feed/posts")
 async def create_post(data: MediaPostCreate, user: dict = Depends(require_member)):
@@ -3655,14 +3766,9 @@ async def my_tickets(user: dict = Depends(get_current_user)):
 # ----------------- Wire up -----------------
 app.include_router(api)
 
-# Serve Spotlight uploads (images & videos) behind /api/uploads so the
-# k8s ingress routes them to backend:8001 like any other /api/* path.
-app.mount("/api/uploads/spotlight", StaticFiles(directory=str(UPLOADS_DIR)), name="spotlight-uploads")
-
-# Serve point-claim proof photos (images only, admin + member can see).
-CLAIMS_DIR_STATIC = Path("/app/backend/uploads/claims")
-CLAIMS_DIR_STATIC.mkdir(parents=True, exist_ok=True)
-app.mount("/api/uploads/claims", StaticFiles(directory=str(CLAIMS_DIR_STATIC)), name="claim-uploads")
+# Note: Spotlight + Claim uploads are NOT mounted as StaticFiles anymore — they're
+# served by dedicated GridFS streaming endpoints defined alongside their upload handlers.
+# Only the WP plugin zip (mostly static, rarely updated) stays on disk.
 
 # Serve the WP plugin zip so the admin can download + install it on rintaki.org
 PLUGIN_DIR = Path("/app/backend/uploads/plugin")

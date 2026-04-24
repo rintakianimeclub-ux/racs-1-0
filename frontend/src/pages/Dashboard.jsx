@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker } from "@/components/ui-brutal";
 import {
   UserCircle, Buildings, Airplane, DiscordLogo,
-  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, HouseLine, CreditCard, SignOut, Trophy,
+  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, CreditCard, SignOut, Trophy,
 } from "@phosphor-icons/react";
 
 // Color rotation: red (primary) → white → gold (accent)
@@ -59,17 +59,6 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
-
-      <a href="https://www.rintaki.org" target="_blank" rel="noreferrer" data-testid="website-full">
-        <Card className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-black text-white border-2 border-black rounded-full flex items-center justify-center"><HouseLine size={18} weight="fill" /></div>
-          <div className="flex-1">
-            <div className="font-black">Full website</div>
-            <div className="text-xs text-[var(--muted-fg)]">Shop, fundraiser, archive</div>
-          </div>
-          <CaretRight size={18} weight="bold" />
-        </Card>
-      </a>
     </div>
   );
 }
