@@ -33,7 +33,7 @@ export default function Home() {
         api.get("/forums/threads").catch(() => ({ data: { threads: [] } })),
         api.get("/magazines").catch(() => ({ data: { magazines: [] } })),
       ]);
-      setFeed(f.data.posts || []);
+      setFeed(f.data || []);
       setEvents(e.data.events || []);
       setThreads(t.data.threads || []);
       setMagazines(m.data.magazines || []);
