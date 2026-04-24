@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import Logo from "@/components/Logo";
@@ -14,6 +14,7 @@ import {
   SignIn,
   ChatCircleDots,
   Heart,
+  CloudSlash,
 } from "@phosphor-icons/react";
 
 const DONATE_URL = "https://buy.stripe.com/28EaEX2AIbKz6Cl8E66EU00";
@@ -32,6 +33,20 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const isMember = !!user && (user.role === "admin" || user.is_member);
 
+  // Track online/offline state so the service worker's offline-mode
+  // behaviour is obvious to the user (no silent silent failures).
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" && !navigator.onLine);
+  useEffect(() => {
+    const on = () => setOffline(false);
+    const off = () => setOffline(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
   const tabs = [
     ...BASE_TABS,
     user ? SPOTLIGHT_TAB : JOIN_TAB,
@@ -40,6 +55,11 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen pb-24">
+      {offline && (
+        <div className="bg-[var(--primary)] text-white text-center text-[11px] font-black uppercase tracking-widest py-1.5 flex items-center justify-center gap-1.5" data-testid="offline-banner">
+          <CloudSlash size={12} weight="bold" /> Offline — showing cached content
+        </div>
+      )}
       {/* Top bar */}
       <header className="sticky top-0 z-30 bg-[var(--bg)] border-b-2 border-black">
         <div className="max-w-md mx-auto px-3 py-2.5 flex items-center justify-between gap-2">

@@ -160,6 +160,21 @@ function App() {
     return () => document.removeEventListener("click", onClick, true);
   }, []);
 
+  // PWA service-worker registration. Only registers in production builds over
+  // HTTPS — in dev mode it would cache broken Webpack-HMR responses.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    if (process.env.NODE_ENV !== "production") return;
+    const register = () => {
+      navigator.serviceWorker.register("/service-worker.js").catch((err) => {
+        // Non-fatal — app still works without the SW
+        console.warn("SW registration failed:", err);
+      });
+    };
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load", register, { once: true });
+  }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>
