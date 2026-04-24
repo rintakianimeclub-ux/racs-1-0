@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -141,6 +141,26 @@ function RouterShell() {
 }
 
 function App() {
+  // In installed-PWA standalone mode (iOS home-screen, Android TWA), a plain
+  // <a target="_blank"> is silently swallowed by the OS. This global click handler
+  // intercepts any external link with target=_blank and re-opens it via
+  // window.open — which works in both browser AND standalone PWA mode.
+  useEffect(() => {
+    const onClick = (e) => {
+      const a = e.target.closest?.("a[target='_blank']");
+      if (!a) return;
+      const href = a.getAttribute("href") || "";
+      if (!/^https?:\/\//i.test(href)) return;        // skip internal/anchor links
+      if (e.defaultPrevented) return;                  // let per-handler code win
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return; // preserve power-user shortcuts
+      e.preventDefault();
+      const win = window.open(href, "_blank", "noopener,noreferrer");
+      if (!win) window.location.href = href;
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>

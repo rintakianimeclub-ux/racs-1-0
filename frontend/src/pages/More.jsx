@@ -102,8 +102,11 @@ export default function More() {
 
 function SocialTile({ url, icon: Icon, label }) {
   if (!url) return null;
+  // The global click interceptor in App.js handles external-link opening
+  // so these links work both in browser and in installed-PWA standalone mode.
   return (
-    <a href={url} target="_blank" rel="noreferrer" data-testid={`social-${label.toLowerCase()}`}>
+    <a href={url} target="_blank" rel="noopener noreferrer"
+       data-testid={`social-${label.toLowerCase()}`}>
       <Card className="text-center p-2">
         <Icon size={22} weight="fill" className="mx-auto" />
         <div className="text-[10px] font-black uppercase tracking-widest mt-1">{label}</div>
