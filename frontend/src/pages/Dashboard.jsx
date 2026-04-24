@@ -3,8 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Card, Sticker } from "@/components/ui-brutal";
 import {
-  UserCircle, Trophy, Buildings, Airplane, ShoppingBag, DiscordLogo,
-  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, HouseLine, CreditCard, SignOut,
+  UserCircle, Buildings, Airplane, DiscordLogo,
+  Gift, Confetti, Article, ShieldStar, CaretRight, CurrencyCircleDollar, HouseLine, CreditCard, SignOut, Trophy,
 } from "@phosphor-icons/react";
 
 // Color rotation: red (primary) → white → gold (accent)
@@ -37,24 +37,15 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       <div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2">
           <Sticker color="accent"><ShieldStar size={12} weight="fill" /> Members only</Sticker>
+          <button onClick={onLogout} data-testid="dash-logout"
+                  className="inline-flex items-center gap-1 bg-white border-2 border-black rounded-full px-3 py-1.5 shadow-[2px_2px_0_#111] text-[10px] font-black uppercase tracking-widest active:translate-x-[1px] active:translate-y-[1px] active:shadow-none">
+            <SignOut size={12} weight="bold" /> Log out
+          </button>
         </div>
         <h1 className="font-black text-3xl mt-2">Hi {user?.name?.split(" ")[0]} 👋</h1>
         <p className="text-[var(--muted-fg)] text-sm">Your members-only hub.</p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Card className="bg-[var(--primary)] text-white p-3">
-          <Trophy size={18} weight="fill" />
-          <div className="font-black text-3xl mt-1">{user?.points ?? 0}</div>
-          <div className="text-xs uppercase tracking-widest">Points</div>
-        </Card>
-        <Card className="bg-[var(--accent)] p-3">
-          <CurrencyCircleDollar size={18} weight="fill" />
-          <div className="font-black text-3xl mt-1">{user?.anime_cash ?? 0}</div>
-          <div className="text-xs uppercase tracking-widest">Anime Cash</div>
-        </Card>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -79,11 +70,6 @@ export default function Dashboard() {
           <CaretRight size={18} weight="bold" />
         </Card>
       </a>
-
-      <button onClick={onLogout} data-testid="dash-logout"
-              className="w-full bg-white brutal-btn rounded-xl py-3 font-bold uppercase tracking-wider flex items-center justify-center gap-2">
-        <SignOut size={16} weight="bold" /> Log out
-      </button>
     </div>
   );
 }
